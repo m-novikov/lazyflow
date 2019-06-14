@@ -73,6 +73,7 @@ class OpA(graph.Operator):
             result[0] = self.Input2[:].wait()[0]
         elif slot == self.Output3:
             result[0] = self.Input3[:].wait()[0]
+        raise Exception()
         return result
 
     def propagateDirty(self, inputSlot, subindex, roi):
@@ -113,6 +114,7 @@ class OpTesting5ToMulti(graph.Operator):
         key = roiToSlice(roi.start, roi.stop)
         index = subindex[0]
         i = 0
+        raise Exception()
         for sname in sorted(self.inputs.keys()):
             slot = self.inputs[sname]
             if slot.connected():
@@ -192,6 +194,8 @@ class TestOperator_setupOutputs(object):
         op = OpA(graph=self.g)
         op.Input1.setValue(1)
         op.Input4.setValues([1])
+        import sys
+        print("exchook", sys.excepthook)
 
         # check that the slot with default value
         # returns the correct value
@@ -764,21 +768,139 @@ class TestTransaction:
         op_b.setupOutputs.assert_called_once()
 
 
+class OpSimpleBroken(graph.Operator):
+    Input = graph.InputSlot()
+    Output = graph.OutputSlot()
+
+    def setupOutputs(self):
+        self.Output.meta.shape = (1,)
+        self.Output.meta.dtype = object
+
+    def propagateDirty(self, *a, **kw):
+        pass
+
+    def execute(self, *a, **kw):
+        #return self.Input[:].wait()
+        raise Exception('broken')
+
+
+class OpSimple(graph.Operator):
+    Input = graph.InputSlot()
+    Output = graph.OutputSlot()
+
+    def setupOutputs(self):
+        self.Output.meta.shape = (1,)
+        self.Output.meta.dtype = object
+
+    def propagateDirty(self, *a, **kw):
+        pass
+
+    def execute(self, *a, **kw):
+        return self.Input[:].wait()
+
+
+def test_me():
+    #raise Exception()
+    g = graph.Graph()
+    op1 = OpSimple(graph=g)
+    op2 = OpSimpleBroken(graph=g)
+
+    op2.Input.setValue(1)
+    #op2.Output[:].wait()
+    op1.Input.connect(op2.Output)
+
+    op1.Output[:].wait()
+
+class OpIncrement(graph.Operator):
+    Input = graph.InputSlot()
+    Output = graph.OutputSlot()
+
+    def setupOutputs(self):
+        self.Output.meta.shape = self.Input.meta.shape
+        self.Output.meta.dtype = self.Input.meta.dtype
+
+    def propagateDirty(self, *a, **kw):
+        pass
+
+    def execute(self, *a, **kw):
+        inp = self.Input[:].wait()
+        return inp + 1
+
+class OpDecrement(graph.Operator):
+    Input = graph.InputSlot()
+    Output = graph.OutputSlot()
+
+    def setupOutputs(self):
+        self.Output.meta.shape = self.Input.meta.shape
+        self.Output.meta.dtype = self.Input.meta.dtype
+
+    def propagateDirty(self, *a, **kw):
+        pass
+
+    def execute(self, *a, **kw):
+        inp = self.Input[:].wait()
+        return inp - 1
+
+from itertools import zip_longest
+from random import shuffle
+
+def pairs(operators):
+    it = iter(operators)
+
+    prev = next(it)
+
+    for el in it:
+        yield prev, el
+        prev = el
+
+    yield prev, None
+
+def test_shuffler():
+    g = graph.Graph()
+    zeros = numpy.zeros(shape=(10, 9))
+
+    inc_ops = [OpIncrement(graph=g) for _ in range(4)]
+    dec_ops = [OpDecrement(graph=g) for _ in range(2)]
+
+    ops = inc_ops + dec_ops
+    shuffle(ops)
+
+    start = None
+    end = None
+
+    for src, dst in pairs(ops):
+        if not start:
+            start = src
+
+        if not dst:
+            end = src
+
+
+        if src and dst:
+            dst.Input.connect(src.Output)
+
+    start.Input.setValue(zeros)
+    print(end.Output[:].wait())
+
+
+
+
 if __name__ == "__main__":
-    import sys
-    import nose
+    test_me()
+    # import sys
+    # import nose
 
-    sys.argv.append("--nocapture")  # Don't steal stdout.  Show it on the console as usual.
-    sys.argv.append("--nologcapture")  # Don't set the logging level to DEBUG.  Leave it alone.
-    ret = nose.run(defaultTest=__file__)
+    # sys.argv.append("--nocapture")  # Don't steal stdout.  Show it on the console as usual.
+    # sys.argv.append("--nologcapture")  # Don't set the logging level to DEBUG.  Leave it alone.
+    # ret = nose.run(defaultTest=__file__)
 
-    #    test = TestSlotStates()
-    #    test.setup()
-    #    test.test_implicitlyConnectedMultiOutputs()
+    # #    test = TestSlotStates()
+    # #    test.setup()
+    # #    test.test_implicitlyConnectedMultiOutputs()
 
-    #    test = TestOperator_setupOutputs()
-    #    test.setUp()
-    #    test.test_disconnected_connected()
+    # #    test = TestOperator_setupOutputs()
+    # #    test.setUp()
+    # #    test.test_disconnected_connected()
 
-    if not ret:
-        sys.exit(1)
+    # if not ret:
+    #     sys.exit(1)
