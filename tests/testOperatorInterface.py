@@ -874,6 +874,7 @@ def test_shuffler():
     def topology_shuffler():
         while True:
             ops = inc_ops + dec_ops
+            print('IS START READY WITHIN', start.Output.ready())
 
             if stop.is_set():
                 break
@@ -902,18 +903,20 @@ def test_shuffler():
                 end.Input.connect(last.Output)
 
                 print("DONE REARRANGEMENT", flush=True)
+            print('READINESS', [op.Output.ready() for op in ops])
 
 
             topology_exists.set()
             time.sleep(0.001)
 
     try:
+        start.Input.setValue(zeros)
+        print('IS START READY', start.Output.ready())
         t = threading.Thread(target=topology_shuffler)
         t.start()
         topology_exists.wait()
 
-        with start.transaction:
-            start.Input.setValue(zeros)
+        #with start.transaction:
 
         def check_result(n):
             #time.sleep(random() * 0.5)
