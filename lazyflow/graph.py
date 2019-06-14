@@ -86,8 +86,9 @@ class Graph:
     """
 
     class Transaction:
-        def __init__(self):
+        def __init__(self, lock):
             self._deferred_callbacks = None
+            self._lock = lock
 
         @property
         def active(self):
@@ -102,6 +103,8 @@ class Graph:
 
         def __enter__(self):
             assert not self.active, "Nested transactions are not supported"
+            self._lock.acquire()
+            print("ENTERED TRANSACTION")
             self._deferred_callbacks = []
 
         def __exit__(self, *args, **kw):
@@ -109,13 +112,16 @@ class Graph:
                 for cb in self._deferred_callbacks:
                     cb()
             finally:
+                print("EXIT TRANSACTION")
+                self._lock.release()
                 self._deferred_callbacks = None
 
     def __init__(self):
         self._setup_depth = 0
         self._sig_setup_complete = None
         self._lock = threading.Lock()
-        self.transaction = self.Transaction()
+        self.rwlock = RWLock()
+        self.transaction = self.Transaction(self.rwlock.writer)
 
     def call_when_setup_finished(self, fn):
         # The graph is considered in "setup" mode if any slot is executing a function that affects the state of the graph.
@@ -169,3 +175,35 @@ class Graph:
                         self._graph._sig_setup_complete = None
                 if sig_setup_complete:
                     sig_setup_complete()
+
+
+import threading
+from contextlib import contextmanager
+
+class RWLock:
+    def __init__(self, lock_factory=threading.Lock):
+        self._wlock = lock_factory()
+        self._rlock = lock_factory()
+        self._readers_count = 0
+
+    @property
+    @contextmanager
+    def reader(self):
+        with self._rlock:
+            self._readers_count += 1
+
+            if self._readers_count == 1:
+                self._wlock.acquire()
+
+        print(f"READERS: {self._readers_count}")
+        yield self
+
+        with self._rlock:
+            self._readers_count -= 1
+
+            if self._readers_count == 0:
+                self._wlock.release()
+
+    @property
+    def writer(self):
+        return self._wlock

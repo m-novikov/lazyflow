@@ -465,7 +465,9 @@ class Operator(metaclass=OperatorMetaClass):
     def _setupOutputs(self):
         # Don't setup this operator if there are currently
         # requests on it.
+        print("INVOKE SETUP OUTPUTS")
         if not self.configured():
+            print("NOT CONFIGURED")
             return
 
         with self._condition:
@@ -554,6 +556,7 @@ class Operator(metaclass=OperatorMetaClass):
         The default implementation emulates the old api behaviour.
 
         """
+        print("CALL SETUP OUTPUTS")
         for slot in list(self.outputs.values()):
             # This assert is here to force subclasses to override this method if the situation requires it.
             # If you have any output slots that aren't directly connected to an internal operator,
@@ -565,7 +568,13 @@ class Operator(metaclass=OperatorMetaClass):
                 "so you must override setupOutputs()".format(slot.name, self.name)
             )
 
+    def _execute(self, slot, subindex, roi, result):
+        with self.graph.rwlock.reader:
+            #print("acquire read lock")
+            return self.execute(slot, subindex, roi, result)
+
     def execute(self, slot, subindex, roi, result):
+        #print("just execute read lock")
         """ This method of the operator is called when a connected
         operator or an outside user of the graph wants to retrieve the
         calculation results from the operator.

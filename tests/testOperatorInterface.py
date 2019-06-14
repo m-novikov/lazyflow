@@ -823,7 +823,6 @@ class OpIncrement(graph.Operator):
         pass
 
     def execute(self, *a, **kw):
-        print('inc')
         inp = self.Input[:].wait()
         return inp + 1
 
@@ -839,7 +838,6 @@ class OpDecrement(graph.Operator):
         pass
 
     def execute(self, *a, **kw):
-        print('dec')
         inp = self.Input[:].wait()
         return inp - 1
 
@@ -871,6 +869,7 @@ def test_shuffler():
     dec_ops = [OpDecrement(graph=g) for _ in range(4)]
 
     stop = threading.Event()
+    topology_exists = threading.Event()
 
     def topology_shuffler():
         while True:
@@ -879,14 +878,17 @@ def test_shuffler():
             if stop.is_set():
                 break
 
-            shuffle(ops)
             first = None
             last = None
 
             with start.transaction:
+                print("SHUFFLE")
+                shuffle(ops)
+                print("START REARRANGEMENT", flush=True)
 
                 for src, dst in pairs(ops):
-                    time.sleep(random() * 0.01)
+                    print("ACT")
+                    time.sleep(random() * 0.1)
                     if not first:
                         first = src
 
@@ -896,20 +898,37 @@ def test_shuffler():
                     if src and dst:
                         dst.Input.connect(src.Output)
 
-            first.Input.connect(start.Output)
-            end.Input.connect(last.Output)
+                first.Input.connect(start.Output)
+                end.Input.connect(last.Output)
 
-            time.sleep(0.03)
+                print("DONE REARRANGEMENT", flush=True)
+
+
+            topology_exists.set()
+            time.sleep(0.001)
 
     try:
         t = threading.Thread(target=topology_shuffler)
         t.start()
-        time.sleep(0.1)
+        topology_exists.wait()
 
-        start.Input.setValue(zeros)
+        with start.transaction:
+            start.Input.setValue(zeros)
+
+        def check_result(n):
+            #time.sleep(random() * 0.5)
+            return end.Output[:].wait()
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            list(ex.map(check_result, range(100)))
+
     finally:
         stop.set()
-    print(end.Output[:].wait())
+
+
+
 
 
 

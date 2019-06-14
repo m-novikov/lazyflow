@@ -522,6 +522,7 @@ class Slot(object):
           upstream_slot   : the slot to which this slot is conencted
         """
         try:
+            print("CONNECT CALL")
 
             if upstream_slot is None:
                 self.disconnect()
@@ -926,7 +927,7 @@ class Slot(object):
             try:
                 # Execute the workload, which might not ever return
                 # (if we get cancelled).
-                result_op = self.operator.execute(self.slot, (), self.roi, destination)
+                result_op = self.operator._execute(self.slot, (), self.roi, destination)
 
                 # copy data from result_op to destination, if
                 # destination was actually given by the user, and the
@@ -1034,45 +1035,46 @@ class Slot(object):
         may be a tuple
 
                           """
-        if self.level > 0:
-            if isinstance(key, tuple):
-                assert len(key) > 0
-                assert len(key) <= self.level
-                if len(key) == 1:
-                    return self._subSlots[key[0]]
-                else:
-                    return self._subSlots[key[0]][key[1:]]
-            return self._subSlots[key]
-        else:
-            if self.meta.shape is None:
-                # Something is wrong.  Are we cancelled?
-                Request.raise_if_cancelled()
-                if not self.ready():
-                    # msg = "This slot ({}.{}) isn't ready yet, which means " \
-                    #      "you can't ask for its data.  Is it connected?".format(self.getRealOperator() and self.getRealOperator().name, self.name)
-                    # self.logger.error(msg)
-                    problem_slot = Slot._findUpstreamProblemSlot(self)
-                    problem_str = str(problem_slot)
-                    if isinstance(problem_slot, Slot):
-                        problem_op = problem_slot.getRealOperator()
-                        if problem_op is not None:
-                            problem_str = problem_op.name + "/" + str(problem_slot)
-                        else:
-                            problem_str = "<NO OPERATOR> /" + str(problem_slot)
-                    slotInfoMsg = (
-                        "Can't get data from slot {}.{} yet."
-                        " It isn't ready."
-                        "First upstream problem slot is: {}"
-                        "".format(self.getRealOperator() and self.getRealOperator().__class__, self.name, problem_str)
+        with self.operator.graph.rwlock.reader:
+            if self.level > 0:
+                if isinstance(key, tuple):
+                    assert len(key) > 0
+                    assert len(key) <= self.level
+                    if len(key) == 1:
+                        return self._subSlots[key[0]]
+                    else:
+                        return self._subSlots[key[0]][key[1:]]
+                return self._subSlots[key]
+            else:
+                if self.meta.shape is None:
+                    # Something is wrong.  Are we cancelled?
+                    Request.raise_if_cancelled()
+                    if not self.ready():
+                        # msg = "This slot ({}.{}) isn't ready yet, which means " \
+                        #      "you can't ask for its data.  Is it connected?".format(self.getRealOperator() and self.getRealOperator().name, self.name)
+                        # self.logger.error(msg)
+                        problem_slot = Slot._findUpstreamProblemSlot(self)
+                        problem_str = str(problem_slot)
+                        if isinstance(problem_slot, Slot):
+                            problem_op = problem_slot.getRealOperator()
+                            if problem_op is not None:
+                                problem_str = problem_op.name + "/" + str(problem_slot)
+                            else:
+                                problem_str = "<NO OPERATOR> /" + str(problem_slot)
+                        slotInfoMsg = (
+                            "Can't get data from slot {}.{} yet."
+                            " It isn't ready."
+                            "First upstream problem slot is: {}"
+                            "".format(self.getRealOperator() and self.getRealOperator().__class__, self.name, problem_str)
+                        )
+                        # self.logger.error(slotInfoMsg)
+                        raise Slot.SlotNotReadyError(slotInfoMsg)
+                    assert self.meta.shape is not None, (
+                        "Can't ask for slices of this slot yet:"
+                        " self.meta.shape is None!"
+                        " (operator {} [self={}] slot: {}, key={}".format(self.operator.name, self.operator, self.name, key)
                     )
-                    # self.logger.error(slotInfoMsg)
-                    raise Slot.SlotNotReadyError(slotInfoMsg)
-                assert self.meta.shape is not None, (
-                    "Can't ask for slices of this slot yet:"
-                    " self.meta.shape is None!"
-                    " (operator {} [self={}] slot: {}, key={}".format(self.operator.name, self.operator, self.name, key)
-                )
-            return self(pslice=key)
+                return self(pslice=key)
 
     def __setitem__(self, key, value):
         """This method provides access to the subslots of a
