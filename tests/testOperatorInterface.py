@@ -823,6 +823,7 @@ class OpIncrement(graph.Operator):
         pass
 
     def execute(self, *a, **kw):
+        print('inc')
         inp = self.Input[:].wait()
         return inp + 1
 
@@ -838,11 +839,14 @@ class OpDecrement(graph.Operator):
         pass
 
     def execute(self, *a, **kw):
+        print('dec')
         inp = self.Input[:].wait()
         return inp - 1
 
 from itertools import zip_longest
-from random import shuffle
+from random import shuffle, random
+import threading
+import time
 
 def pairs(operators):
     it = iter(operators)
@@ -855,31 +859,56 @@ def pairs(operators):
 
     yield prev, None
 
+
 def test_shuffler():
     g = graph.Graph()
     zeros = numpy.zeros(shape=(10, 9))
 
+    start = OpIncrement(graph=g)
+    end = OpDecrement(graph=g)
+
     inc_ops = [OpIncrement(graph=g) for _ in range(4)]
-    dec_ops = [OpDecrement(graph=g) for _ in range(2)]
+    dec_ops = [OpDecrement(graph=g) for _ in range(4)]
 
-    ops = inc_ops + dec_ops
-    shuffle(ops)
+    stop = threading.Event()
 
-    start = None
-    end = None
+    def topology_shuffler():
+        while True:
+            ops = inc_ops + dec_ops
 
-    for src, dst in pairs(ops):
-        if not start:
-            start = src
+            if stop.is_set():
+                break
 
-        if not dst:
-            end = src
+            shuffle(ops)
+            first = None
+            last = None
 
+            with start.transaction:
 
-        if src and dst:
-            dst.Input.connect(src.Output)
+                for src, dst in pairs(ops):
+                    time.sleep(random() * 0.01)
+                    if not first:
+                        first = src
 
-    start.Input.setValue(zeros)
+                    if not dst:
+                        last = src
+
+                    if src and dst:
+                        dst.Input.connect(src.Output)
+
+            first.Input.connect(start.Output)
+            end.Input.connect(last.Output)
+
+            time.sleep(0.03)
+
+    try:
+        t = threading.Thread(target=topology_shuffler)
+        t.start()
+        time.sleep(0.1)
+
+        start.Input.setValue(zeros)
+    finally:
+        stop.set()
     print(end.Output[:].wait())
 
 
