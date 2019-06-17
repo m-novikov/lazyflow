@@ -62,6 +62,92 @@ def fail_after_timeout(seconds):
 
     return decorator
 
+import threading
+
+
+class AtomicCounter:
+    __slots__ = ('_lock', '_value')
+
+    def __init__(self, lock = None):
+        self._lock = lock or threading.Lock()
+        self._value = 0
+
+    @property
+    def value(self):
+        return self._value
+
+    def increment(self):
+        with self._lock:
+            self._value += 1
+
+    def decrement(self):
+        with self._lock:
+            self._value -= 1
+
+    def __eq__(self, other):
+        assert isinstance(other,  int)
+        return self._value == other
+
+from contextlib import contextmanager
+
+class RWLock:
+    def __init__(self, lock_factory=threading.Lock):
+        self._wlock = lock_factory()
+        self._rlock = lock_factory()
+        self._readers_count = 0
+
+    @property
+    @contextmanager
+    def reader(self):
+        with self._rlock:
+            self._readers_count += 1
+
+            if self._readers_count == 1:
+                self._wlock.acquire()
+
+        yield self
+
+        with self._rlock:
+            self._readers_count -= 1
+
+            if self._readers_count == 0:
+                self._wlock.release()
+
+    @property
+    @contextmanager
+    def writer(self):
+        with self._wlock:
+            yield self
+
+
+from threading import Thread
+from concurrent.futures import ThreadPoolExecutor
+import time
+
+def test_thpoool():
+    lock = RWLock()
+
+    def work(n):
+        with lock.reader:
+            print('read some', flush=True)
+            time.sleep(0.01)
+            print('read done', flush=True)
+
+    def work2():
+        print("write enter", flush=True)
+        with lock.writer:
+            print('write some', flush=True)
+            time.sleep(0.01)
+            print('write done', flush=True)
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        t = Thread(target=work2)
+        res = ex.map(work, range(10))
+        t.start()
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        res = ex.map(work, range(10))
+
 
 if __name__ == "__main__":
     import time
