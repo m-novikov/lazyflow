@@ -500,6 +500,7 @@ class Slot(object):
         """
         if self.meta._ready:
             self.meta._ready = False
+            print("XXXXXXXXXXXXXX notifying unready", self.operator, self.name)
             self._sig_unready(self)
 
     def setOrConnect(self, value_or_slot):
@@ -522,8 +523,6 @@ class Slot(object):
           upstream_slot   : the slot to which this slot is conencted
         """
         try:
-            print("CONNECT CALL")
-
             if upstream_slot is None:
                 self.disconnect()
                 return
@@ -560,7 +559,7 @@ class Slot(object):
                 self.disconnect()
 
             if upstream_slot is not None:
-                upstream_slot._sig_unready.subscribe(self._handleUpstreamUnready)
+                #upstream_slot._sig_unready.subscribe(self._handleUpstreamUnready)
                 self._value = None
                 if upstream_slot.level == self.level:
                     assert upstream_slot.stype.isCompatible(type(self.stype)), (
@@ -582,6 +581,7 @@ class Slot(object):
                     elif len(self) > len(upstream_slot):
                         upstream_slot.resize(len(self))
 
+                    print(upstream_slot.operator, "NOW HAS DOWNSTREAM", self.operator)
                     upstream_slot.downstream_slots.append(self)
                     for i in range(len(self.upstream_slot)):
                         p = self.upstream_slot[i]
@@ -1448,7 +1448,7 @@ class Slot(object):
 
     def maybe_call_within_transaction(self, fn):
         if self.graph:
-            self.graph.maybe_call_within_transaction(fn)
+            self.graph.maybe_call_within_transaction(fn, operator=self.operator)
         else:
             fn()
 
@@ -1459,13 +1459,20 @@ class Slot(object):
         oldMeta = self.meta
         old_ready = self.ready()
         if self.upstream_slot is not None and self.meta != self.upstream_slot.meta:
+            print("UPSTREAM META", self.upstream_slot.operator, self.upstream_slot.meta)
             self.meta = self.upstream_slot.meta.copy()
+
+        if self._type != "output":
+            op = self.getRealOperator()
+            if op is not None and not op._cleaningUp:
+                self._configureOperator(self)
 
         if self._type == "output":
             for o in self._subSlots:
                 o._changed()
 
         # Notify readiness after subslots are updated
+        print("self ready", self.operator, self.name, self.ready())
         if self.ready() != old_ready:
             if self.ready():
                 self._sig_ready(self)
@@ -1483,14 +1490,11 @@ class Slot(object):
 
             self.meta._dirty = False
 
-        if self._type != "output":
-            op = self.getRealOperator()
-            if op is not None and not op._cleaningUp:
-                self._configureOperator(self)
-
         if wasdirty:
             # call changed callbacks
             self._sig_changed(self)
+
+        #print("self.ready", self.meta._ready)
 
     def _configureOperator(self, slot, oldSize=0, newSize=0, notify=True):
         """Call setupOutputs of Operator if all slots of the operator
@@ -1585,7 +1589,7 @@ class Slot(object):
         else:
             realOpName = self.getRealOperator().name
 
-        return "{}.{} {}: \t{}\n".format(realOpName, self.name, mslot_info, self.meta)
+        return "{}.{} {}: \t{}".format(realOpName, self.name, mslot_info, self.meta)
 
     def __repr__(self):
         return self.__str__()

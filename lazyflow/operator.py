@@ -249,6 +249,12 @@ class Operator(metaclass=OperatorMetaClass):
 
         self._debug_text = None
         self._setup_count = 0
+        self._register_op()
+        import names
+        self.human_name = names.get_first_name()
+
+    def _register_op(self):
+        self.graph.register_operator(self)
 
     @property
     def children(self):
@@ -465,9 +471,7 @@ class Operator(metaclass=OperatorMetaClass):
     def _setupOutputs(self):
         # Don't setup this operator if there are currently
         # requests on it.
-        print("INVOKE SETUP OUTPUTS")
         if not self.configured():
-            print("NOT CONFIGURED")
             return
 
         with self._condition:
@@ -556,7 +560,6 @@ class Operator(metaclass=OperatorMetaClass):
         The default implementation emulates the old api behaviour.
 
         """
-        print("CALL SETUP OUTPUTS")
         for slot in list(self.outputs.values()):
             # This assert is here to force subclasses to override this method if the situation requires it.
             # If you have any output slots that aren't directly connected to an internal operator,
@@ -602,6 +605,9 @@ class Operator(metaclass=OperatorMetaClass):
     def debug_text(self):
         # return self._debug_text
         return "setups: {}".format(self._setup_count)
+
+    def __repr__(self):
+        return getattr(self, 'human_name', 'Noname')
 
 
 #    @debug_text.setter
