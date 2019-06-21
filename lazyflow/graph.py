@@ -86,42 +86,65 @@ class Graph:
     """
 
     class Transaction:
-        def __init__(self, lock):
+        class State:
+            Active = 'Active'
+            Exiting = 'Exiting'
+            Inactive = 'Inactive'
+
+        def __init__(self, lock, graph):
             self._deferred_callbacks = None
+            self._state = self.State.Inactive
             self._lock = lock
+            self._graph = graph
 
         @property
         def active(self):
-            return self._deferred_callbacks is not None
+            return self._state == self.State.Active
 
-        def on_exit(self, fn):
-            assert self.active, "Cannot register callbacks on inactive transaction"
-            if fn in self._deferred_callbacks:
-                return
+        def on_exit(self, fn, operator):
+            if self._state == self.State.Active:
+                if (fn, operator) in self._deferred_callbacks:
+                    return
+                else:
+                    self._deferred_callbacks.append((fn, operator))
+            elif self._state == self.State.Exiting:
+                if (fn, operator) in self._deferred_callbacks:
+                    return
+                else:
+                    fn()
             else:
-                self._deferred_callbacks.append(fn)
+                fn()
 
         def __enter__(self):
             assert not self.active, "Nested transactions are not supported"
             self._lock.acquire()
-            print("ENTERED TRANSACTION")
+            self._state = self.State.Active
             self._deferred_callbacks = []
 
         def __exit__(self, *args, **kw):
+            # On exit we making transaction inactive immidiatelly to avoid adding more deferred callbacks
+            self._state = self.State.Exiting
             try:
-                for cb in self._deferred_callbacks:
+                ranks = topo_sort(self._graph._ops)
+                print("RANKS", ranks)
+                for cb, operator in sorted(self._deferred_callbacks, key=lambda val: ranks[val[1]]):
                     cb()
             finally:
                 print("EXIT TRANSACTION")
-                self._lock.release()
                 self._deferred_callbacks = None
+                self._state = self.State.Inactive
+                self._lock.release()
 
     def __init__(self):
         self._setup_depth = 0
         self._sig_setup_complete = None
         self._lock = threading.Lock()
         self.rwlock = RWLock()
-        self.transaction = self.Transaction(self.rwlock.writer)
+        self.transaction = self.Transaction(self.rwlock.writer, self)
+        self._ops = []
+
+    def register_operator(self, operator):
+        self._ops.append(operator)
 
     def call_when_setup_finished(self, fn):
         # The graph is considered in "setup" mode if any slot is executing a function that affects the state of the graph.
@@ -142,11 +165,10 @@ class Graph:
             # Subscribe to the next completion.
             self._sig_setup_complete.subscribe(fn)
 
-    def maybe_call_within_transaction(self, fn):
-        if self.transaction.active:
-            self.transaction.on_exit(fn)
-        else:
-            fn()
+    def maybe_call_within_transaction(self, fn, operator=None):
+        # Call or not to call should be decided by transaction
+        # if we already have deferred function in queue then we'll avoid calling it one more time
+        self.transaction.on_exit(fn, operator)
 
     class SetupDepthContext(object):
         """
@@ -195,7 +217,7 @@ class RWLock:
             if self._readers_count == 1:
                 self._wlock.acquire()
 
-        print(f"READERS: {self._readers_count}")
+        #print(f"READERS: {self._readers_count}")
         yield self
 
         with self._rlock:
@@ -207,3 +229,36 @@ class RWLock:
     @property
     def writer(self):
         return self._wlock
+
+
+def iter_slots(op):
+    yield from op.inputs.values()
+    yield from op.outputs.values()
+
+def downstream_ops(op):
+    ops = set()
+    for slot in iter_slots(op):
+        for s in slot.downstream_slots:
+            ops.add(s.operator)
+
+    return ops
+
+def topo_sort(ops):
+    stack = []
+    visited = {op: False for op in ops}
+
+    def topo_sort_until(op):
+        visited[op] = True
+        for dop in downstream_ops(op):
+            if not visited[dop]:
+                topo_sort_until(dop)
+
+        stack.insert(0, op)
+
+    for op in ops:
+        if not visited[op]:
+            topo_sort_until(op)
+
+    return {
+        op: rank for rank, op in enumerate(stack)
+    }

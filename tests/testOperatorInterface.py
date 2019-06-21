@@ -857,8 +857,12 @@ def pairs(operators):
 
     yield prev, None
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 def test_shuffler():
+    print("HEELOOOO", flush=True)
     g = graph.Graph()
     zeros = numpy.zeros(shape=(10, 9))
 
@@ -870,22 +874,29 @@ def test_shuffler():
 
     stop = threading.Event()
     topology_exists = threading.Event()
+    print("HEELOOOO")
 
+    #topology_exists.set()
     def topology_shuffler():
         while True:
             ops = inc_ops + dec_ops
             print('IS START READY WITHIN', start.Output.ready())
 
             if stop.is_set():
+                print("+++ BREAK")
                 break
 
             first = None
             last = None
+            pp = None
 
             with start.transaction:
                 print("SHUFFLE")
                 shuffle(ops)
                 print("START REARRANGEMENT", flush=True)
+                print("start", start)
+                pp = list(pairs(ops))
+                print("end", end)
 
                 for src, dst in pairs(ops):
                     print("ACT")
@@ -900,38 +911,84 @@ def test_shuffler():
                         dst.Input.connect(src.Output)
 
                 first.Input.connect(start.Output)
+                print("connected", first, "to", start)
                 end.Input.connect(last.Output)
+                print("connected", end, "to", last)
 
                 print("DONE REARRANGEMENT", flush=True)
+            print("pairs", pp)
+            print("SORTED", topo_sort(start.graph._ops))
             print('READINESS', [op.Output.ready() for op in ops])
 
-
             topology_exists.set()
-            time.sleep(0.001)
+            time.sleep(0.05)
+        print("+++ EXIT")
 
     try:
+        print('--- BEFORE READY', flush=True)
         start.Input.setValue(zeros)
-        print('IS START READY', start.Output.ready())
+        print('--- IS START READY', start.Output.ready(), flush=True)
         t = threading.Thread(target=topology_shuffler)
         t.start()
+        print("--- TOP EXISTS?", flush=True)
         topology_exists.wait()
+        print("--- TOP EXISTS? - YES")
 
         #with start.transaction:
 
         def check_result(n):
-            #time.sleep(random() * 0.5)
-            return end.Output[:].wait()
+            with g.rwlock.reader:
+                time.sleep(random() * 0.05)
+                return end.Output[:].wait().sum()
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
+        print("=========")
         with ThreadPoolExecutor(max_workers=4) as ex:
-            list(ex.map(check_result, range(100)))
+            print("!!!!!results", list(ex.map(check_result, range(100))))
+        print("XXX")
+    except Exception as e:
+        print('ERROR', e)
+        assert False
 
     finally:
         stop.set()
+        print("GRAPH", g._ops)
+        print("STOP", topo_sort(g._ops))
+
+def iter_slots(op):
+    yield from op.inputs.values()
+    yield from op.outputs.values()
+
+def downstream_ops(op):
+    ops = set()
+    for slot in iter_slots(op):
+        for s in slot.downstream_slots:
+            ops.add(s.operator)
+
+    return ops
 
 
+def topo_sort(ops):
+    stack = []
+    visited = {op: False for op in ops}
+    # Can we assume that topological sort of operators is the same as topological sort of slots?
 
+    def topo_sort_until(op):
+        visited[op] = True
+        for dop in downstream_ops(op):
+            if not visited[dop]:
+                topo_sort_until(dop)
+
+        stack.insert(0, op)
+
+    for op in ops:
+        if not visited[op]:
+            topo_sort_until(op)
+            # for slot in iter_slots(op):
+            #     print(op, 'down', [s.operator for s in slot.downstream_slots])
+
+    print("STACK", stack, "TOTAL", len(stack))
 
 
 
