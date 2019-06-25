@@ -521,145 +521,117 @@ class Slot(object):
         Arguments:
           upstream_slot   : the slot to which this slot is conencted
         """
-        try:
+        if upstream_slot is None:
+            self.disconnect()
+            return
 
-            if upstream_slot is None:
-                self.disconnect()
-                return
+        assert isinstance(upstream_slot, Slot), (
+            "Slot.connect() can only be used to connect other Slots. Did " "you mean to use Slot.setValue()?"
+        )
+        assert self.allow_mask or (not upstream_slot.meta.has_mask), (
+            'The operator, "%s", is being setup to receive a masked array as input to slot, "%s",'
+            ' from the output slot, "%s", on operator, "%s". This is currently not supported.'
+            % (self.operator.name, self.name, upstream_slot.name, upstream_slot.operator.name)
+        )
 
-            assert isinstance(upstream_slot, Slot), (
-                "Slot.connect() can only be used to connect other Slots. Did " "you mean to use Slot.setValue()?"
-            )
-            assert self.allow_mask or (not upstream_slot.meta.has_mask), (
-                'The operator, "%s", is being setup to receive a masked array as input to slot, "%s",'
-                ' from the output slot, "%s", on operator, "%s". This is currently not supported.'
-                % (self.operator.name, self.name, upstream_slot.name, upstream_slot.operator.name)
-            )
+        my_op = self.getRealOperator()
+        partner_op = upstream_slot.getRealOperator()
+        if partner_op and not (
+            partner_op.parent is my_op.parent
+            or (self._type == "output" and partner_op.parent is my_op)
+            or (self._type == "input" and my_op.parent is partner_op)
+            or my_op is partner_op
+        ):
+            if not permit_distant_connection:
+                msg = (
+                    "It is forbidden to connect slots of operators that are not siblings "
+                    "or not directly related as parent and child."
+                )
+                if partner_op.parent is None or my_op.parent is None:
+                    msg += "\n(For one of your operators, parent=None.  Was it already cleaned up?"
+                raise Exception(msg)
 
-            my_op = self.getRealOperator()
-            partner_op = upstream_slot.getRealOperator()
-            if partner_op and not (
-                partner_op.parent is my_op.parent
-                or (self._type == "output" and partner_op.parent is my_op)
-                or (self._type == "input" and my_op.parent is partner_op)
-                or my_op is partner_op
-            ):
-                if not permit_distant_connection:
-                    msg = (
-                        "It is forbidden to connect slots of operators that are not siblings "
-                        "or not directly related as parent and child."
+        if self.upstream_slot is upstream_slot and upstream_slot.level == self.level:
+            return
+        if self.level == 0:
+            self.disconnect()
+
+        if upstream_slot is not None:
+            upstream_slot._sig_unready.subscribe(self._handleUpstreamUnready)
+            self._value = None
+            if upstream_slot.level == self.level:
+                assert upstream_slot.stype.isCompatible(type(self.stype)), (
+                    "Can't connect slots of non-matching stypes!"
+                    f"Tried to connect {self.getRealOperator()} with {upstream_slot.getRealOperator()}."
+                    " Attempting to connect '{}' (stype: {}) to '{}' (stype: {})".format(
+                        self.name, self.stype, upstream_slot.name, upstream_slot.stype
                     )
-                    if partner_op.parent is None or my_op.parent is None:
-                        msg += "\n(For one of your operators, parent=None.  Was it already cleaned up?"
-                    raise Exception(msg)
+                )
 
-            if self.upstream_slot is upstream_slot and upstream_slot.level == self.level:
-                return
-            if self.level == 0:
-                self.disconnect()
+                self.upstream_slot = upstream_slot
+                notifyReady = self.upstream_slot.meta._ready and not self.meta._ready
+                self.meta = self.upstream_slot.meta.copy()
 
-            if upstream_slot is not None:
-                upstream_slot._sig_unready.subscribe(self._handleUpstreamUnready)
-                self._value = None
-                if upstream_slot.level == self.level:
-                    assert upstream_slot.stype.isCompatible(type(self.stype)), (
-                        "Can't connect slots of non-matching stypes!"
-                        f"Tried to connect {self.getRealOperator()} with {upstream_slot.getRealOperator()}."
-                        " Attempting to connect '{}' (stype: {}) to '{}' (stype: {})".format(
-                            self.name, self.stype, upstream_slot.name, upstream_slot.stype
-                        )
-                    )
+                # the slot with more sub-slots determines
+                # the number of subslots
+                if len(self) < len(upstream_slot):
+                    self.resize(len(upstream_slot))
+                elif len(self) > len(upstream_slot):
+                    upstream_slot.resize(len(self))
 
-                    self.upstream_slot = upstream_slot
-                    notifyReady = self.upstream_slot.meta._ready and not self.meta._ready
-                    self.meta = self.upstream_slot.meta.copy()
+                upstream_slot.downstream_slots.append(self)
+                for i in range(len(self.upstream_slot)):
+                    p = self.upstream_slot[i]
+                    self[i].connect(p)
 
-                    # the slot with more sub-slots determines
-                    # the number of subslots
-                    if len(self) < len(upstream_slot):
-                        self.resize(len(upstream_slot))
-                    elif len(self) > len(upstream_slot):
-                        upstream_slot.resize(len(self))
+                # call slot type connect function
+                self.stype.connect(upstream_slot)
 
-                    upstream_slot.downstream_slots.append(self)
-                    for i in range(len(self.upstream_slot)):
-                        p = self.upstream_slot[i]
-                        self[i].connect(p)
-
-                    # call slot type connect function
-                    self.stype.connect(upstream_slot)
-
-                    if self.level > 0 or self.stype.isConfigured():
-                        self._changed()
-
-                    # call connect callbacks
-                    self._sig_connect(self)
-
-                    # Notify readiness after upstream_slot is updated
-                    if notifyReady:
-                        self._sig_ready(self)
-
-                elif upstream_slot.level < self.level:
-                    self.upstream_slot = upstream_slot
-                    notifyReady = self.upstream_slot.meta._ready and not self.meta._ready
-                    self.meta = self.upstream_slot.meta.copy()
-                    for i, slot in enumerate(self._subSlots):
-                        slot.connect(upstream_slot)
-
-                    if notifyReady:
-                        self._sig_ready(self)
-
+                if self.level > 0 or self.stype.isConfigured():
                     self._changed()
-                    # call connect callbacks
-                    self._sig_connect(self)
 
-                elif upstream_slot.level > self.level:
-                    msg = str(
-                        "Can't connect slots:"
-                        " {}.{}.level={}, but"
-                        " {}.{}.level={}"
-                        " (Implicit OpearatorWrapper creation"
-                        " is no longer supported.)"
-                    ).format(
-                        self.getRealOperator().name,
-                        self.name,
-                        self.level,
-                        upstream_slot.getRealOperator().name,
-                        upstream_slot.name,
-                        upstream_slot.level,
-                    )
-                    raise RuntimeError(msg)
+                # call connect callbacks
+                self._sig_connect(self)
 
-                # propagate value changed signals from inner to outer
-                # operators.
-                if self._type == upstream_slot._type == "output":
-                    upstream_slot.notifyValueChanged(self._sig_value_changed)
+                # Notify readiness after upstream_slot is updated
+                if notifyReady:
+                    self._sig_ready(self)
 
-        except:
-            try:
-                raise
-            finally:
-                try:
-                    # We would like to clean up by calling self.disconnect()
-                    # ... but if that raises an exception, it OVERWRITES the original exception.
-                    # This complicated nest of try/except/finally is supposed to prevent that from happening.
-                    # For example, see the bottom of this site:
-                    # http://doughellmann.com/2009/06/19/python-exception-handling-techniques.html
-                    # And yet, that DOESN'T work here for some unknown reason.
-                    # Hence, we can't actually clean up.
-                    # What a bummer.
+            elif upstream_slot.level < self.level:
+                self.upstream_slot = upstream_slot
+                notifyReady = self.upstream_slot.meta._ready and not self.meta._ready
+                self.meta = self.upstream_slot.meta.copy()
+                for i, slot in enumerate(self._subSlots):
+                    slot.connect(upstream_slot)
 
-                    ##self.disconnect() # commented out because it might throw and hide the original exception. See note above.
-                    pass
-                except:
-                    # Well, this is bad.  We caused an exception while handling an exception.
-                    # We're more interested in the FIRST exception, so print this one out and
-                    #  continue unwinding the stack with the first one.
-                    self.logger.error("Error: Caught a secondary exception while handling a different exception.")
-                    import traceback
+                if notifyReady:
+                    self._sig_ready(self)
 
-                    traceback.print_exc()
-                    pass
+                self._changed()
+                # call connect callbacks
+                self._sig_connect(self)
+
+            elif upstream_slot.level > self.level:
+                msg = str(
+                    "Can't connect slots:"
+                    " {}.{}.level={}, but"
+                    " {}.{}.level={}"
+                    " (Implicit OpearatorWrapper creation"
+                    " is no longer supported.)"
+                ).format(
+                    self.getRealOperator().name,
+                    self.name,
+                    self.level,
+                    upstream_slot.getRealOperator().name,
+                    upstream_slot.name,
+                    upstream_slot.level,
+                )
+                raise RuntimeError(msg)
+
+            # propagate value changed signals from inner to outer
+            # operators.
+            if self._type == upstream_slot._type == "output":
+                upstream_slot.notifyValueChanged(self._sig_value_changed)
 
     @is_setup_fn
     def disconnect(self):
@@ -1148,125 +1120,99 @@ class Slot(object):
         assigned in self.meta.  Additional metadata fields can be added via the
         extra_meta parameter.
         """
-        try:
-            assert isinstance(notify, bool)
-            assert isinstance(check_changed, bool)
+        assert isinstance(notify, bool)
+        assert isinstance(check_changed, bool)
 
-            # This assertion is here to prevent accidental use of setValue
-            # when connect should be used. If your use case requires
-            # passing slots as values, then this assertion can be refined.
-            assert not isinstance(value, Slot), "When using setValue, value cannot be a slot.  Use connect instead."
+        # This assertion is here to prevent accidental use of setValue
+        # when connect should be used. If your use case requires
+        # passing slots as values, then this assertion can be refined.
+        assert not isinstance(value, Slot), "When using setValue, value cannot be a slot.  Use connect instead."
 
-            # If we do not support masked arrays, ensure that we are not being passed one.
-            assert self.allow_mask or not (self.meta.has_mask or isinstance(value, numpy.ma.masked_array)), (
-                'The operator, "%s", is being setup to receive a masked array as input to slot, "%s".'
-                " This is currently not supported." % (self.operator.name, self.name)
+        # If we do not support masked arrays, ensure that we are not being passed one.
+        assert self.allow_mask or not (self.meta.has_mask or isinstance(value, numpy.ma.masked_array)), (
+            'The operator, "%s", is being setup to receive a masked array as input to slot, "%s".'
+            " This is currently not supported." % (self.operator.name, self.name)
+        )
+
+        if not self.backpropagate_values:
+            assert self.upstream_slot is None, (
+                "Cannot call setValue on this slot."
+                " It is already connected to a upstream_slot."
+                " Call disconnect first if that's what you really wanted."
             )
+        elif self.upstream_slot is not None:
+            self.upstream_slot.setValue(value, notify, check_changed)
+            return
 
-            if not self.backpropagate_values:
-                assert self.upstream_slot is None, (
-                    "Cannot call setValue on this slot."
-                    " It is already connected to a upstream_slot."
-                    " Call disconnect first if that's what you really wanted."
-                )
-            elif self.upstream_slot is not None:
-                self.upstream_slot.setValue(value, notify, check_changed)
-                return
+        changed = True
 
-            changed = True
+        # We use == here instead of 'is' to avoid subtle bugs that
+        #  can occur if you supplied an equivalent value that 'is not' the original.
+        # For example: x=numpy.uint8(3); y=numpy.int64(3); assert x == y;  assert x is not y
+        if check_changed:
+            changed = False
+            # Fast path checks for array types
+            if isinstance(value, numpy.ndarray) or isinstance(self._value, numpy.ndarray):
+                if type(value) != type(self._value) or value.shape != self._value.shape:
+                    changed = True
+            if isinstance(value, numpy.ma.masked_array) and isinstance(self._value, numpy.ma.masked_array):
+                # Type comparison already checked as all masked arrays are subclasses of ndarrays.
+                # NAN does not compare equal so we need a way to check that separately.
+                if (value.fill_value != self._value.fill_value) and not (
+                    numpy.isnan(value.fill_value) and numpy.isnan(self._value.fill_value)
+                ):
+                    changed = True
+            if isinstance(value, vigra.VigraArray) or isinstance(self._value, vigra.VigraArray):
+                if type(value) != type(self._value) or value.axistags != self._value.axistags:
+                    changed = True
 
-            # We use == here instead of 'is' to avoid subtle bugs that
-            #  can occur if you supplied an equivalent value that 'is not' the original.
-            # For example: x=numpy.uint8(3); y=numpy.int64(3); assert x == y;  assert x is not y
-            if check_changed:
-                changed = False
-                # Fast path checks for array types
-                if isinstance(value, numpy.ndarray) or isinstance(self._value, numpy.ndarray):
-                    if type(value) != type(self._value) or value.shape != self._value.shape:
-                        changed = True
-                if isinstance(value, numpy.ma.masked_array) and isinstance(self._value, numpy.ma.masked_array):
-                    # Type comparison already checked as all masked arrays are subclasses of ndarrays.
-                    # NAN does not compare equal so we need a way to check that separately.
-                    if (value.fill_value != self._value.fill_value) and not (
-                        numpy.isnan(value.fill_value) and numpy.isnan(self._value.fill_value)
-                    ):
-                        changed = True
-                if isinstance(value, vigra.VigraArray) or isinstance(self._value, vigra.VigraArray):
-                    if type(value) != type(self._value) or value.axistags != self._value.axistags:
-                        changed = True
+            if not changed:
+                # Slow path checks
+                same = value is self._value
+                if not same:
+                    try:
+                        same = value == self._value
+                    except ValueError:
+                        # Some values can't be compared with __eq__,
+                        # in which case we assume the values are different
+                        same = False
+                    if isinstance(same, (numpy.ndarray, TinyVector)):
+                        same = same.all()
+                changed = not same
 
-                if not changed:
-                    # Slow path checks
-                    same = value is self._value
-                    if not same:
-                        try:
-                            same = value == self._value
-                        except ValueError:
-                            # Some values can't be compared with __eq__,
-                            # in which case we assume the values are different
-                            same = False
-                        if isinstance(same, (numpy.ndarray, TinyVector)):
-                            same = same.all()
-                    changed = not same
+        if changed:
+            # call disconnect callbacks
+            self._sig_disconnect(self)
+            self._value = value
+            self.stype.setupMetaForValue(value)
 
-            if changed:
-                # call disconnect callbacks
-                self._sig_disconnect(self)
-                self._value = value
-                self.stype.setupMetaForValue(value)
+            for k, v in list(extra_meta.items()):
+                setattr(self.meta, k, v)
 
-                for k, v in list(extra_meta.items()):
-                    setattr(self.meta, k, v)
+            self.meta._dirty = True
 
-                self.meta._dirty = True
+            for s in self._subSlots:
+                s.setValue(self._value)
 
-                for s in self._subSlots:
-                    s.setValue(self._value)
+            # a slot with a value is ready unless the value is None.
+            if self._value is not None:
+                if self.meta._ready != True:
+                    self.meta._ready = True
+                    self._sig_ready(self)
+            else:
+                if self.meta._ready != False:
+                    self.meta._ready = False
+                    self._sig_unready(self)
 
-                # a slot with a value is ready unless the value is None.
-                if self._value is not None:
-                    if self.meta._ready != True:
-                        self.meta._ready = True
-                        self._sig_ready(self)
-                else:
-                    if self.meta._ready != False:
-                        self.meta._ready = False
-                        self._sig_unready(self)
+            # call connect callbacks
+            self._sig_connect(self)
+            self._changed()
 
-                # call connect callbacks
-                self._sig_connect(self)
-                self._changed()
-
-                # Propagate dirtyness
-                if self.rtype == rtype.List:
-                    self.setDirty(())
-                else:
-                    self.setDirty(slice(None))
-        except:
-            try:
-                raise
-            finally:
-                try:
-                    # We would like to clean up by calling self.disconnect()
-                    # ... but if that raises an exception, it OVERWRITES the original exception.
-                    # This complicated nest of try/except/finally is supposed to prevent that from happening.
-                    # For example, see the bottom of this site:
-                    # http://doughellmann.com/2009/06/19/python-exception-handling-techniques.html
-                    # And yet, that DOESN'T work here for some unknown reason.
-                    # Hence, we can't actually clean up.
-                    # What a bummer.
-
-                    ##self.disconnect() # commented out because it might throw and hide the original exception. See note above.
-                    pass
-                except:
-                    # Well, this is bad.  We caused an exception while handling an exception.
-                    # We're more interested in the FIRST excpetion, so print this one out and
-                    #  continue unwinding the stack with the first one.
-                    self.logger.error("Error: Caught a secondary exception while handling a different exception.")
-                    import traceback
-
-                    traceback.print_exc()
-                    pass
+            # Propagate dirtyness
+            if self.rtype == rtype.List:
+                self.setDirty(())
+            else:
+                self.setDirty(slice(None))
 
     @is_setup_fn
     def setValues(self, values):
@@ -1284,20 +1230,7 @@ class Slot(object):
             self._changed()
             self._sig_connect(self)
         except:
-            try:
-                exc_info = sys.exc_info()
-                self.disconnect()
-            except:
-                # Well, this is bad.  We caused an exception while handling an exception.
-                # We're more interested in the FIRST excpetion, so print this one out and
-                #  continue unwinding the stack with the first one.
-                self.logger.error("Error: Caught a secondary exception while handling a different exception.")
-                import traceback
-
-                traceback.print_exc()
-                exc_type, exc_value, exc_tb = exc_info
-                raise_with_traceback(exc_type(exc_value), exc_tb)
-            raise
+            self.disconnect()
 
     @property
     def backpropagate_values(self):
