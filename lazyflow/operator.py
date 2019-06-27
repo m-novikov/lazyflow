@@ -29,6 +29,7 @@ from typing import Optional
 
 # lazyflow
 from lazyflow.slot import InputSlot, OutputSlot, Slot
+from dask.distributed import Lock
 
 
 class InputDict(collections.OrderedDict):
@@ -197,8 +198,10 @@ class Operator(metaclass=OperatorMetaClass):
         # before __init__
         ##
         obj = object.__new__(cls)
-        obj.inputs = InputDict(obj)
-        obj.outputs = OutputDict(obj)
+        obj.inputs = collections.OrderedDict()
+        # InputDict(obj)
+        obj.outputs = collections.OrderedDict()
+        # OutputDict(obj)
         return obj
 
     def __init__(self, parent=None, graph=None):
@@ -234,7 +237,20 @@ class Operator(metaclass=OperatorMetaClass):
 
         self._initialized = False
 
-        self._condition = threading.Condition()
+        class Condition:
+            def notify(self):
+                pass
+
+            def wait(self):
+                pass
+
+            def __enter__(self):
+                pass
+
+            def __exit__(self, *args, **kwargs):
+                pass
+
+        self._condition = threading.Condition(Lock())
         self._executionCount = 0
         self._settingUp = False
 

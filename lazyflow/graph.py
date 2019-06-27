@@ -77,6 +77,9 @@ from lazyflow.slot import InputSlot, OutputSlot, Slot
 from lazyflow.operator import Operator, InputDict, OutputDict, OperatorMetaClass
 from lazyflow.operatorWrapper import OperatorWrapper
 from lazyflow.metaDict import MetaDict
+from dask.distributed import Lock
+
+from dask.distributed import Client
 
 
 class Graph:
@@ -114,7 +117,7 @@ class Graph:
     def __init__(self):
         self._setup_depth = 0
         self._sig_setup_complete = None
-        self._lock = threading.Lock()
+        self._lock = Lock()
         self.transaction = self.Transaction()
 
     def call_when_setup_finished(self, fn):

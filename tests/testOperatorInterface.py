@@ -132,11 +132,11 @@ class OpTesting5ToMulti(graph.Operator):
                 i += 1
 
 
-class TestOperator_setupOutputs(object):
-    def setup_method(self, method):
+class TestOperatorSetupOutputs(object):
+    def setup(self):
         self.g = graph.Graph()
 
-    def test_disconnected_connected(self):
+    def test_disconnected_connected(self, _slot):
         # check that operator is not configuerd initiallia
         # since it has a slot without default value
         op = OpA(graph=self.g)
@@ -159,7 +159,7 @@ class TestOperator_setupOutputs(object):
         op.Input3.setValue(2)
         assert op._configured == True
 
-    def test_set_values(self):
+    def test_set_values(self, _slot):
         op = OpA(graph=self.g)
 
         # check that Input4 is not connected
@@ -188,7 +188,7 @@ class TestOperator_setupOutputs(object):
         assert op.Input4[0].value == 3
         assert op.Input4[1].value == 3
 
-    def test_default_value(self):
+    def test_default_value(self, _slot):
         op = OpA(graph=self.g)
         op.Input1.setValue(1)
         op.Input4.setValues([1])
@@ -205,7 +205,7 @@ class TestOperator_setupOutputs(object):
         result = op.Output3[:].wait()[0]
         assert result == 2
 
-    def test_connect_propagate(self):
+    def test_connect_propagate(self, _slot):
         # check that connecting a required slot to an
         # already configured slots notifes the operator
         # of connecting
@@ -217,7 +217,7 @@ class TestOperator_setupOutputs(object):
         op2.Input4.setValues([1])
         assert op2._configured == True
 
-    def test_deferred_connect_propagate(self):
+    def test_deferred_connect_propagate(self, _slot):
         # check that connecting a required slot to an
         # not yet  configured slots notifes the operator
         # of connecting after configuring the first operator

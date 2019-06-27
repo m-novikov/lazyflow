@@ -27,6 +27,10 @@ import numpy
 from collections import OrderedDict, defaultdict
 
 
+def _none():
+    return None
+
+
 class MetaDict(defaultdict):
     """
     Helper class that manages the dirty state of the meta data of a slot.
@@ -34,10 +38,12 @@ class MetaDict(defaultdict):
     """
 
     def __init__(self, other=None, *args, **kwargs):
-        if other is None:
-            defaultdict.__init__(self, lambda: None, **kwargs)
+        if isinstance(other, dict):
+            defaultdict.__init__(self, _none, other, **kwargs)
         else:
-            defaultdict.__init__(self, lambda: None, other, **kwargs)
+            defaultdict.__init__(self, _none, **kwargs)
+            # print("OTHER", other, type(other))
+            # defaultdict.__init__(self, _none, other, **kwargs)
 
         if not "_ready" in self:
             # flag that indicates whether all dependencies of the slot

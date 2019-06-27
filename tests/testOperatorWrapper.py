@@ -74,13 +74,8 @@ class OpCopyInput(Operator):
 
 
 class TestBasic(object):
-    @classmethod
-    def setup_class(cls):
-        cls.graph = Graph()
-
-    @classmethod
-    def teardown_class(cls):
-        pass
+    def setup(self):
+        self.graph = Graph()
 
     def test_fullWrapping(self):
         """
@@ -148,9 +143,8 @@ class TestBasic(object):
 
 
 class TestMultiOutputToWrapped(object):
-    @classmethod
-    def setup_class(cls):
-        cls.graph = Graph()
+    def setup(self):
+        self.graph = Graph()
 
     def test_input_output_resize(self):
         exMulti = OpExplicitMulti(graph=self.graph)

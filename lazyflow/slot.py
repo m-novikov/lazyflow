@@ -37,6 +37,13 @@ import threading
 from functools import partial, wraps
 from contextlib import contextmanager
 import warnings
+from dask.distributed import Client, local_client, get_client
+
+# dask_client = Client()#processes=False)
+# def sum(a, b):
+#     return a + b
+# res = dask_client.submit(sum, 1, 2)
+# print(res.result())
 
 # SciPy
 import numpy
@@ -50,6 +57,10 @@ from lazyflow.request import Request
 from lazyflow.stype import ArrayLike
 from lazyflow.metaDict import MetaDict
 from lazyflow.utility import slicingtools, OrderedSignal
+
+_dask_client = None
+# Client()
+# res = self.dask_client.submit(sum, [1,2,3])
 
 
 class ValueRequest(object):
@@ -880,9 +891,22 @@ class Slot(object):
             # normal (outputslot) case
             # --> construct heavy request object..
             execWrapper = Slot.RequestExecutionWrapper(self, roi)
-            request = Request(execWrapper)
+            client = get_client()
+            fut = client.submit(execWrapper)
 
-            return request
+            class Wrap:
+                def __init__(self, fut):
+                    self._fut = fut
+
+                def wait(self):
+                    return self._fut.result()
+
+                def cancel(self):
+                    self._fut.cancel()
+
+            # request = Request(execWrapper)
+
+            return Wrap(fut)
 
     @staticmethod
     def _findUpstreamProblemSlot(slot):
