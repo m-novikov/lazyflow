@@ -455,7 +455,7 @@ class Operator(metaclass=OperatorMetaClass):
                     return func(self, *args, **kwargs)
                 finally:
                     self._settingUp = False
-                    self._condition.notifyAll()
+                    self._condition.notify()
 
         wrapper.__wrapped__ = func  # Emulate python 3 behavior of @wraps
         return wrapper
@@ -480,7 +480,7 @@ class Operator(metaclass=OperatorMetaClass):
             self._setup_count += 1
 
             self._settingUp = False
-            self._condition.notifyAll()
+            self._condition.notify()
 
         try:
             # Determine new "ready" flags
@@ -562,6 +562,28 @@ class Operator(metaclass=OperatorMetaClass):
                 "Output slot '{}' of operator '{}' has no upstream_slot, "
                 "so you must override setupOutputs()".format(slot.name, self.name)
             )
+
+    def _incrementExecutionCount(self):
+        assert self._executionCount >= 0, "BUG: How did the execution count get negative?"
+        # We can't execute while the operator is in the middle of
+        # setupOutputs
+        with self._condition:
+            while self._settingUp:
+                self._condition.wait()
+            self._executionCount += 1
+
+    def _decrementExecutionCount(self):
+        assert self._executionCount > 0, "BUG: Can't decrement the execution count below zero!"
+        with self._condition:
+            self._executionCount -= 1
+            self._condition.notify()
+
+    def _execute(self, slot, subindex, roi, result):
+        try:
+            self._incrementExecutionCount()
+            return self.execute(slot, subindex, roi, result)
+        finally:
+            self._decrementExecutionCount()
 
     def execute(self, slot, subindex, roi, result):
         """ This method of the operator is called when a connected
