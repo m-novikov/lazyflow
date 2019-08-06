@@ -86,9 +86,13 @@ def test_generator_executes_in_same_thread(pool):
     class GenTask:
         def __init__(self, gen):
             self.gen = gen
+            self.priority = 0
 
         def __call__(self):
             return next(self.gen)
+
+        def __lt__(self, other):
+            return self.priority < other.priority
 
     gen_task = GenTask(make_gen())
 

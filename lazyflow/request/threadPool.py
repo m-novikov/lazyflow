@@ -62,6 +62,7 @@ class ThreadPool:
                     worker = self.ready_workers.get()
 
                 worker.job_queue.put(task)
+                task = None
             except Exception as e:
                 logger.exception("Exception in scheduler")
 
@@ -103,21 +104,9 @@ class _Worker(threading.Thread):
         self.job_queue = queue.Queue()
         self.state = "initialized"
 
-    def task_stream(self):
-        while True:
-            self.thread_pool.ready_workers.put(self)
-            task = self.job_queue.get()
-
-            if task is STOP:
-                self.job_queue.task_done()
-                return
-
-            try:
-                task.assigned_worker = self
-            except Exception:
-                logger.exception("Failed to assign worker to the task %s", task)
-
-            yield task
+    def get_next_task(self):
+        self.thread_pool.ready_workers.put(self)
+        return self.job_queue.get()
 
     def run(self):
         """Keep executing available tasks until we're stopped."""
@@ -126,19 +115,30 @@ class _Worker(threading.Thread):
 
         logger.info("Started worker %s", self)
 
-        for next_task in self.task_stream():
+        while True:
+            next_task = self.get_next_task()
+
             self.state = "running task"
+
+            if next_task is STOP:
+                self.job_queue.task_done()
+                break
+
+            try:
+                next_task.assigned_worker = self
+            except Exception:
+                logger.exception("Failed to assign worker to the task %s", task)
 
             try:
                 next_task()
             except Exception:
                 logger.exception("Exception during processing %s", next_task)
             finally:
+                self.state = "freeing task"
                 self.job_queue.task_done()
+                next_task = None
 
             # We're done with this request.
             # Free it immediately for garbage collection.
-            self.state = "freeing task"
-            next_task = None
 
         logger.info("Stopped worker %s", self)
