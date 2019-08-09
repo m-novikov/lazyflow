@@ -33,8 +33,8 @@ import platform
 import traceback
 import io
 from random import randrange
-from typing import Callable
 from numpy import ma
+from typing import Callable, Optional
 
 
 import logging
@@ -107,6 +107,49 @@ def log_exception(logger, msg=None, exc_info=None, level=logging.ERROR):
         logger.log(level, msg)
 
 
+class CancellationException(Exception):
+    """
+    This is raised when the whole request has been cancelled.
+    If you catch this exception from within a request, clean up and return immediately.
+    If you have nothing to clean up, you are not required to handle this exception.
+
+    Implementation details:
+    This exception is raised when the cancel flag is checked in the wait() function:
+    - immediately before the request is suspended OR
+    - immediately after the request is woken up from suspension
+    """
+
+    pass
+
+
+class CancellationToken:
+    __slots__ = ("_cancelled",)
+
+    def __init__(self):
+        self._cancelled = False
+
+    @property
+    def cancelled(self):
+        return self._cancelled
+
+    def raise_if_cancelled(self):
+        if self.cancelled:
+            raise CancellationException()
+
+    def __repr__(self):
+        return f"CancellationToken(id={id(self)}, cancelled={self._cancelled})"
+
+
+class CancellationTokenSource:
+    __slots__ = ("token",)
+
+    def __init__(self):
+        self.token = CancellationToken()
+
+    def cancel(self):
+        self.token._cancelled = True
+
+
 class Request(object):
 
     # One thread pool shared by all requests.
@@ -143,20 +186,6 @@ class Request(object):
             if cls.global_thread_pool is not None:
                 cls.global_thread_pool.stop()
             cls.global_thread_pool = threadPool.ThreadPool(num_workers)
-
-    class CancellationException(Exception):
-        """
-        This is raised when the whole request has been cancelled.
-        If you catch this exception from within a request, clean up and return immediately.
-        If you have nothing to clean up, you are not required to handle this exception.
-
-        Implementation details:
-        This exception is raised when the cancel flag is checked in the wait() function:
-        - immediately before the request is suspended OR
-        - immediately after the request is woken up from suspension
-        """
-
-        pass
 
     class InvalidRequestException(Exception):
         """
@@ -197,7 +226,7 @@ class Request(object):
 
     _root_request_counter = itertools.count()
 
-    def __init__(self, fn, root_priority=[0]):
+    def __init__(self, fn, root_priority=[0], cancel_token=None):
         """
         Constructor.
         Postconditions: The request has the same cancelled status as its parent (the request that is creating this one).
@@ -208,6 +237,7 @@ class Request(object):
         self._sig_cancelled = SimpleSignal()
         self._sig_finished = SimpleSignal()
         self._sig_execution_complete = SimpleSignal()
+        self.cancel_token = cancel_token
 
         # Workload
         self.fn = fn
@@ -217,8 +247,6 @@ class Request(object):
 
         # State
         self.started = False
-        self.cancelled = False
-        self.uncancellable = False
         self.finished = False
         self.execution_complete = False
         self.finished_event = threading.Event()
@@ -249,10 +277,14 @@ class Request(object):
             with current_request._lock:
                 current_request.child_requests.add(self)
                 # We must ensure that we get the same cancelled status as our parent.
-                self.cancelled = current_request.cancelled
+                self.cancel_token = current_request.cancel_token
                 # We acquire the same priority as our parent, plus our own sub-priority
                 current_request._max_child_priority += 1
                 self._priority = current_request._priority + root_priority + [current_request._max_child_priority]
+
+    @property
+    def uncancellable(self):
+        return self.cancel_token is None
 
     def __lt__(self, other):
         """
@@ -290,6 +322,10 @@ class Request(object):
         42
         """
         return _ValueRequest(value)
+
+    @property
+    def cancelled(self):
+        return self.cancel_token and self.cancel_token.cancelled
 
     def clean(self, _fullClean=True):
         """
@@ -358,7 +394,7 @@ class Request(object):
             try:
                 # Do the actual work
                 self._result = self.fn()
-            except Request.CancellationException:
+            except CancellationException:
                 # Don't propagate cancellations back to the worker thread,
                 # even if the user didn't catch them.
                 pass
@@ -577,8 +613,6 @@ class Request(object):
         Here, we rely on an ordinary threading.Event primitive: ``self.finished_event``
         """
         # Don't allow this request to be cancelled, since a real thread is waiting for it.
-        self.uncancellable = True
-
         with self._lock:
             direct_execute_needed = not self.started and (timeout is None)
             if direct_execute_needed:
@@ -610,18 +644,22 @@ class Request(object):
         else:
             self.submit()
 
-        # This is a non-worker thread, so just block the old-fashioned way
         completed = self.finished_event.wait(timeout)
-        if not completed:
-            raise Request.TimeoutException()
 
         if self.cancelled:
             # It turns out this request was already cancelled.
             raise Request.InvalidRequestException()
 
+        if not completed:
+            raise Request.TimeoutException()
+
         if self.exception is not None:
             exc_type, exc_value, exc_tb = self.exception_info
             raise_with_traceback(exc_value, exc_tb)
+
+    def raise_if_cancelled(self):
+        if self.cancel_token is not None:
+            self.cancel_token.raise_if_cancelled()
 
     def _wait_within_request(self, current_request):
         """
@@ -629,7 +667,7 @@ class Request(object):
         If we have to wait, suspend the current request instead of blocking the whole worker thread.
         """
         # Before we suspend the current request, check to see if it's been cancelled since it last blocked
-        Request.raise_if_cancelled()
+        self.raise_if_cancelled()
 
         if current_request == self:
             # It's usually nonsense for a request to wait for itself,
@@ -690,7 +728,7 @@ class Request(object):
 
         # Now we're back (no longer suspended)
         # Was the current request cancelled while it was waiting for us?
-        Request.raise_if_cancelled()
+        self.raise_if_cancelled()
 
         # Are we back because we failed?
         if self.exception is not None:
@@ -766,32 +804,6 @@ class Request(object):
             # Call immediately
             fn(self.exception, self.exception_info)
 
-    def cancel(self):
-        """
-        Attempt to cancel this request and all requests that it spawned.
-        No request will be cancelled if other non-cancelled requests are waiting for its results.
-        """
-        # We can only be cancelled if:
-        # (1) There are no foreign threads blocking for us (flagged via self.uncancellable) AND
-        # (2) our parent request (if any) is already cancelled AND
-        # (3) all requests that are pending for this one are already cancelled
-        with self._lock:
-            cancelled = not self.uncancellable
-            cancelled &= self.parent_request is None or self.parent_request.cancelled
-            for r in self.pending_requests:
-                cancelled &= r.cancelled
-
-            self.cancelled = cancelled
-            if cancelled:
-                # Any children added after this point will receive our same cancelled status
-                child_requests = self.child_requests
-                self.child_requests = set()
-
-        if self.cancelled:
-            # Cancel all requests that were spawned from this one.
-            for child in child_requests:
-                child.cancel()
-
     @classmethod
     def _current_request(cls):
         """
@@ -813,14 +825,6 @@ class Request(object):
         """
         current_request = Request._current_request()
         return current_request and current_request.cancelled
-
-    @classmethod
-    def raise_if_cancelled(cls):
-        """
-        If called from the context of a cancelled request, raise a CancellationException immediately.
-        """
-        if Request.current_request_is_cancelled():
-            raise Request.CancellationException()
 
     ##########################################
     #### Backwards-compatible API support ####
@@ -990,7 +994,7 @@ class RequestLock(object):
             # Try to get it immediately.
             got_it = self._modelLock.acquire(False)
             if not blocking:
-                Request.raise_if_cancelled()
+                current_request.raise_if_cancelled()
                 return got_it
             if not got_it:
                 # We have to wait.  Add ourselves to the list of waiters.
@@ -1003,7 +1007,7 @@ class RequestLock(object):
 
             # Now we're back (no longer suspended)
             # Was the current request cancelled while it was waiting for the lock?
-            Request.raise_if_cancelled()
+            current_request.raise_if_cancelled()
 
         # Guaranteed to own _modelLock now (see release()).
         return True
@@ -1153,7 +1157,7 @@ class SimpleRequestCondition(object):
     def __enter__(self):
         try:
             return self._ownership_lock.__enter__()
-        except Request.CancellationException:
+        except CancellationException:
             self._notify_nocheck()
             raise
 
@@ -1236,10 +1240,11 @@ class RequestPool(object):
 
         pass
 
-    def __init__(self, max_active=None):
+    def __init__(self, max_active=None, cancel_token: Optional[CancellationToken] = None):
         """
         max_active: The number of Requests to launch in parallel.
         """
+        self._cancel_token = cancel_token
         self._started = False
         self._failed = False
         self._finished = True

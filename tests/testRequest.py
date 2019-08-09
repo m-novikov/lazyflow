@@ -22,7 +22,14 @@ from builtins import object
 # This information is also available on the ilastik web site at:
 # 		   http://ilastik.org/license/
 ###############################################################################
-from lazyflow.request.request import Request, RequestLock, SimpleRequestCondition, RequestPool
+from lazyflow.request.request import (
+    Request,
+    RequestLock,
+    SimpleRequestCondition,
+    RequestPool,
+    CancellationTokenSource,
+    CancellationException,
+)
 import os
 import time
 import random
@@ -204,6 +211,7 @@ class TestRequest(unittest.TestCase):
 
         got_cancel = [False]
         workcounter = [0]
+        cancel_source = CancellationTokenSource()
 
         def big_workload():
             try:
@@ -219,7 +227,7 @@ class TestRequest(unittest.TestCase):
                 ), "Shouldn't get to this line.  This test is designed so that big_workload should be cancelled before it finishes all its work"
                 for r in requests:
                     assert not r.cancelled
-            except Request.CancellationException:
+            except CancellationException:
                 got_cancel[0] = True
             except Exception as ex:
                 import traceback
@@ -232,14 +240,14 @@ class TestRequest(unittest.TestCase):
         def handle_complete(result):
             completed[0] = True
 
-        req = Request(big_workload)
+        req = Request(big_workload, cancel_token=cancel_source.token)
         req.notify_finished(handle_complete)
         req.submit()
 
         while workcounter[0] == 0:
             time.sleep(0.001)
 
-        req.cancel()
+        cancel_source.cancel()
         time.sleep(1)
 
         assert req.cancelled

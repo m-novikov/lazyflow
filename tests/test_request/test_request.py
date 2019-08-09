@@ -7,7 +7,7 @@ import pytest
 import numpy as np
 from numpy.testing import assert_array_equal
 
-from lazyflow.request.request import Request, SimpleSignal
+from lazyflow.request.request import Request, SimpleSignal, CancellationTokenSource, CancellationException
 
 
 class TExc(Exception):
@@ -88,10 +88,13 @@ class Work:
             self.result = self.work_fn()
             return self.result
         except Exception as e:
+            print("EXC")
             self.exception = e
             raise
         finally:
+            print("DONE")
             self.done.set()
+            print("OUTDONE")
 
 
 class TestRequest:
@@ -141,7 +144,7 @@ class TestRequest:
 
         req.notify_finished(recv)
         req.submit()
-        assert work.done.wait(timeout=1)
+        assert req.wait(timeout=1)
 
         recv.assert_called_once_with(42)
 
@@ -150,7 +153,7 @@ class TestRequest:
 
         recv = mock.Mock()
         req.submit()
-        assert work.done.wait(timeout=1)
+        assert req.wait(timeout=1)
 
         req.notify_finished(recv)
 
@@ -164,6 +167,7 @@ class TestRequest:
         req.submit()
 
         with pytest.raises(TExc):
+            print("HELLO")
             assert req.wait() == 42
         recv.assert_not_called()
 
@@ -198,7 +202,12 @@ class TestRequest:
 
 
 @pytest.fixture
-def work():
+def cancel_source():
+    return CancellationTokenSource()
+
+
+@pytest.fixture
+def work(cancel_source):
     unpause = threading.Event()
     children = []
 
@@ -212,7 +221,7 @@ def work():
     work = Work(work_fn)
     work.unpause = unpause
 
-    work.request = Request(work)
+    work.request = Request(work, cancel_token=cancel_source.token)
     work.request.submit()
     work.children = children
 
@@ -232,9 +241,9 @@ def test_requests_created_within_request_considired_child_requests(work):
 
 
 @pytest.fixture
-def cancelled_work(work):
+def cancelled_work(work, cancel_source):
     assert not work.request.cancelled
-    work.request.cancel()
+    cancel_source.cancel()
     assert work.request.cancelled
 
     work.unpause.set()
@@ -252,7 +261,7 @@ def test_wait_for_cancelled_rq_raises_invalid_request_exception(cancelled_work):
 
 def test_cancel_raises_exception_on_yield_point(cancelled_work):
     work_rq = cancelled_work.request
-    assert isinstance(cancelled_work.exception, Request.CancellationException)
+    assert isinstance(cancelled_work.exception, CancellationException)
 
 
 def test_cancels_child_requests(cancelled_work):
