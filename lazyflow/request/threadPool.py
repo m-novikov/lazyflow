@@ -61,7 +61,7 @@ class ThreadPool:
                 if not worker:
                     worker = self.ready_workers.get()
 
-                worker.job_queue.put(task)
+                worker.job_queue.put_nowait(task)
                 task = None
             except Exception as e:
                 logger.exception("Exception in scheduler")
@@ -111,11 +111,11 @@ class _Worker(threading.Thread):
     def run(self):
         """Keep executing available tasks until we're stopped."""
         # Try to get some work.
-        self.state = "waiting"
 
         logger.info("Started worker %s", self)
 
         while True:
+            self.state = "waiting"
             next_task = self.get_next_task()
 
             self.state = "running task"
@@ -136,9 +136,8 @@ class _Worker(threading.Thread):
             finally:
                 self.state = "freeing task"
                 self.job_queue.task_done()
+                # We're done with this request.
+                # Free it immediately for garbage collection.
                 next_task = None
-
-            # We're done with this request.
-            # Free it immediately for garbage collection.
 
         logger.info("Stopped worker %s", self)
