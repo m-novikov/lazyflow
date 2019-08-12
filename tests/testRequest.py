@@ -658,7 +658,7 @@ class TestRequest(unittest.TestCase):
         del req
 
         # The ThreadPool._Worker loop has a local reference (next_task),
-        # so wait just a tic for the ThreadPool worker to cycle back to the top of its loop (and discard the reference)
+        # trigger garbage collection and check that reference was discarded
         gc.collect()
         assert w[0]() is None
 
