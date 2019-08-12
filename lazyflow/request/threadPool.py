@@ -63,8 +63,8 @@ class ThreadPool:
 
                 worker.job_queue.put_nowait(task)
                 task = None
-            except Exception as e:
-                logger.exception("Exception in scheduler")
+            except Exception:
+                logger.exception("Unhandled exception in the scheduler thread")
 
     @property
     def num_workers(self):
