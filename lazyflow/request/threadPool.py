@@ -19,13 +19,14 @@
 # This information is also available on the ilastik web site at:
 # 		   http://ilastik.org/license/
 ###############################################################################
+from __future__ import annotations
 
 import atexit
 import logging
 import queue
 import enum
 import threading
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Any
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +38,15 @@ class StopException(Exception):
 class QueueObject:
     __slots__ = ("obj", "exc", "priority")
 
-    def __init__(self, *, obj=None, exc=None, priority=None):
+    def __init__(self, *, obj: Any = None, exc: Exception = None, priority: Optional[List[int]] = None) -> None:
         if bool(obj) == bool(exc):
             raise ValueError("Either obj or exc should be set")
 
         self.obj = obj
         self.exc = exc
-        self.priority = priority or 0
+        self.priority = priority or [0]
 
-    def unwrap(self):
+    def unwrap(self) -> Any:
         if self.obj:
             return self.obj
 
@@ -62,7 +63,13 @@ class ThreadPool:
         num_workers: The number of worker threads.
     """
 
-    def __init__(self, num_workers: int):
+    workers: List["_Worker"]
+
+    _unassigned_tasks: queue.Queue[QueueObject]
+    _ready_workers: queue.Queue[QueueObject]
+    _scheduler: threading.Thread
+
+    def __init__(self, num_workers: int) -> None:
         """Start all workers."""
         self._unassigned_tasks = queue.PriorityQueue()
         self._ready_workers = queue.Queue()
@@ -77,7 +84,7 @@ class ThreadPool:
         self._scheduler.daemon = True
         self._scheduler.start()
 
-    def _distribute_work(self):
+    def _distribute_work(self) -> None:
         task = None
 
         while True:
@@ -101,10 +108,10 @@ class ThreadPool:
                 task = None
 
     @property
-    def num_workers(self):
+    def num_workers(self) -> int:
         return len(self.workers)
 
-    def enqueue(self, task: Callable[[], None], priority: Optional[List] = None) -> None:
+    def enqueue(self, task: Callable[[], None], priority: Optional[List[int]] = None) -> None:
         """
         Schedule the given task on the worker that is assigned to it.
         If it has no assigned worker yet, assign it to the first worker that becomes available.
@@ -130,7 +137,7 @@ class ThreadPool:
     def get_states(self) -> List[str]:
         return [w.state for w in self.workers]
 
-    def notify_ready(self, worker):
+    def notify_ready(self, worker: "_Worker") -> None:
         self._ready_workers.put(QueueObject(obj=worker))
 
 
@@ -140,17 +147,21 @@ class _Worker(threading.Thread):
     The loop pops one task from the threadpool and executes it.
     """
 
-    def __init__(self, thread_pool, index):
+    thread_pool: ThreadPool
+    job_queue: queue.Queue[QueueObject]
+    state: str
+
+    def __init__(self, thread_pool: ThreadPool, index: int) -> None:
         super().__init__(name=f"Worker #{index}", daemon=True)
         self.thread_pool = thread_pool
         self.job_queue = queue.Queue()
         self.state = "initialized"
 
-    def get_next_task(self) -> QueueObject:
+    def get_next_task(self) -> Callable[[], None]:
         self.thread_pool.notify_ready(self)
         return self.job_queue.get().unwrap()
 
-    def run(self):
+    def run(self) -> None:
         """Keep executing available tasks until we're stopped."""
         # Try to get some work.
 
@@ -158,6 +169,9 @@ class _Worker(threading.Thread):
 
         while True:
             self.state = "waiting"
+
+            next_task: Optional[Callable[[], None]] = None
+
             try:
                 next_task = self.get_next_task()
                 self.state = "running task"
@@ -165,7 +179,7 @@ class _Worker(threading.Thread):
                 try:
                     next_task.assigned_worker = self
                 except Exception:
-                    logger.exception("Failed to assign worker to the task %s", task)
+                    logger.exception("Failed to assign worker to the task %s", next_task)
                     continue
 
                 try:
@@ -178,10 +192,6 @@ class _Worker(threading.Thread):
                 break
 
             finally:
-                self.state = "freeing task"
                 self.job_queue.task_done()
-                # We're done with this request.
-                # Free it immediately for garbage collection.
-                next_task = None
 
         logger.info("Stopped worker %s", self)
