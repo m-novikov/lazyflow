@@ -50,7 +50,7 @@ def test_stop_stops_all_workers(pool: ThreadPool):
         w.join()
 
 
-def test_wake_task_executes_task_on_idle_worker(pool: ThreadPool):
+def test_enqueueing_task_executes_task_on_idle_worker(pool: ThreadPool):
     start = threading.Event()
     stop = threading.Event()
 
@@ -59,13 +59,13 @@ def test_wake_task_executes_task_on_idle_worker(pool: ThreadPool):
         time.sleep(0.2)
         stop.set()
 
-    pool.wake_up(task)
+    pool.enqueue(task)
     assert start.wait(timeout=1)
     assert pool.get_states().count("running task") == 1
     assert stop.wait(timeout=1)
 
 
-def test_wake_task_executes_task_on_assigned_worker(pool: ThreadPool):
+def test_enqueueing_task_executes_task_on_assigned_worker(pool: ThreadPool):
     stop = threading.Event()
     worker = None
 
@@ -76,7 +76,7 @@ def test_wake_task_executes_task_on_assigned_worker(pool: ThreadPool):
         stop.set()
 
     task.assigned_worker = random.choice(list(pool.workers))
-    pool.wake_up(task)
+    pool.enqueue(task)
     assert stop.wait(timeout=1)
     assert worker == task.assigned_worker
 
@@ -94,8 +94,8 @@ def test_exception_does_not_kill_worker():
         order.append(2)
         stop.set()
 
-    pool.wake_up(Task(task1))
-    pool.wake_up(Task(task2))
+    pool.enqueue(Task(task1))
+    pool.enqueue(Task(task2))
 
     assert stop.wait(timeout=1)
     assert order == [1, 2]
@@ -113,7 +113,7 @@ def test_exception_in_task_logged(caplog, pool):
         finally:
             stop.set()
 
-    pool.wake_up(task1)
+    pool.enqueue(task1)
     assert stop.wait(timeout=1)
     assert len(caplog.records) == 1
 

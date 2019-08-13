@@ -39,7 +39,7 @@ def test_RequestLock():
             + "lockA.pending: {}\n".format(len(lockA._pendingRequests))
             + "lockB.pending: {}\n".format(len(lockB._pendingRequests))
             # + "suspended Requests: {}\n".format( len(Request.global_suspend_set) )
-            + "global job queue: {}\n".format(Request.global_thread_pool.unassigned_tasks.qsize())
+            + "global job queue: {}\n".format(Request.global_thread_pool.queue_size)
         )
         for worker in Request.global_thread_pool.workers:
             status += "{} queued tasks: {}\n".format(worker.name, worker.job_queue.qsize())
