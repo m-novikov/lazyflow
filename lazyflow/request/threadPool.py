@@ -37,25 +37,25 @@ class StopException(Exception):
 
 
 class QueueObject:
-    __slots__ = ("obj", "exc", "priority")
+    __slots__ = ("_obj", "_exc", "_priority")
 
     def __init__(self, *, obj: T = None, exc: Exception = None, priority: Optional[List[int]] = None) -> None:
         if (obj is None) == (exc is None):
             raise ValueError("Either obj or exc should be set")
 
-        self.obj = obj
-        self.exc = exc
+        self._obj = obj
+        self._exc = exc
 
-        self.priority = priority or [0]
+        self._priority = priority or [0]
 
     def unwrap(self) -> T:
-        if self.obj is not None:
-            return self.obj
+        if self._obj is not None:
+            return self._obj
 
-        raise self.exc  # type: ignore
+        raise self._exc  # type: ignore
 
-    def __lt__(self, other):
-        return self.priority < other.priority
+    def __lt__(self, other: QueueObject):
+        return self._priority < other._priority
 
 
 class ThreadPool:
