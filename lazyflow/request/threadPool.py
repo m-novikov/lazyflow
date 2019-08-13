@@ -26,9 +26,10 @@ import logging
 import queue
 import enum
 import threading
-from typing import Callable, List, Optional, Any
+from typing import Callable, List, Optional, Any, TypeVar
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 class StopException(Exception):
@@ -38,15 +39,19 @@ class StopException(Exception):
 class QueueObject:
     __slots__ = ("obj", "exc", "priority")
 
-    def __init__(self, *, obj: Any = None, exc: Exception = None, priority: Optional[List[int]] = None) -> None:
-        if bool(obj) == bool(exc):
+    def __init__(self, *, obj: T = None, exc: Exception = None, priority: Optional[List[int]] = None) -> None:
+        if (obj is None) == (exc is None):
             raise ValueError("Either obj or exc should be set")
 
-        self.obj = obj
-        self.exc = exc
+        elif obj is not None:
+            self.obj = obj
+
+        elif exc is not None:
+            self.exc = exc
+
         self.priority = priority or [0]
 
-    def unwrap(self) -> Any:
+    def unwrap(self) -> T:
         if self.obj:
             return self.obj
 
