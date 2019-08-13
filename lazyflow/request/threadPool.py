@@ -43,19 +43,16 @@ class QueueObject:
         if (obj is None) == (exc is None):
             raise ValueError("Either obj or exc should be set")
 
-        elif obj is not None:
-            self.obj = obj
-
-        elif exc is not None:
-            self.exc = exc
+        self.obj = obj
+        self.exc = exc
 
         self.priority = priority or [0]
 
     def unwrap(self) -> T:
-        if self.obj:
+        if self.obj is not None:
             return self.obj
 
-        raise self.exc
+        raise self.exc  # type: ignore
 
     def __lt__(self, other):
         return self.priority < other.priority
