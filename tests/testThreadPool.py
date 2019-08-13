@@ -47,9 +47,9 @@ def test_basic(pool):
         f1_started.wait()
         f2_finished.set()
 
-    pool.wake_up(f2)
+    pool.enqueue(f2)
     f2_started.wait()
-    pool.wake_up(f1)
+    pool.enqueue(f1)
 
     f2_finished.wait()
 
@@ -66,7 +66,7 @@ def test_function_executes_in_same_thread(pool):
 
     for _i in range(pool.num_workers):
         func_finished.clear()
-        pool.wake_up(func)
+        pool.enqueue(func)
         func_finished.wait()
 
     assert len(set(thread_ids)) == 1
@@ -98,7 +98,7 @@ def test_generator_executes_in_same_thread(pool):
 
     # Submit an infinite generator task and wait for it to be scheduled.
     # 1 worker is busy with gen_task, N-1 workers are free.
-    pool.wake_up(gen_task)
+    pool.enqueue(gen_task)
     gen_stepped.wait()
 
     class WaitTask:
@@ -114,11 +114,11 @@ def test_generator_executes_in_same_thread(pool):
     # 1 worker is busy with gen_task, N-1 workers are busy with instances
     # of WaitTask, 1 instance of WaitTask is in the queue.
     for i in range(pool.num_workers):
-        pool.wake_up(WaitTask(i))
+        pool.enqueue(WaitTask(i))
 
     # Force the gen_task to take 1 more step.
     gen_stepped.clear()
-    pool.wake_up(gen_task)
+    pool.enqueue(gen_task)
     gen_stepped.wait()
 
     # Ensure that both gen_task invocations have been executed in the same thread.

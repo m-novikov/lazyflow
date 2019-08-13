@@ -683,7 +683,6 @@ class TestRequest(unittest.TestCase):
         finally:
             # Set it back to what it was
             Request.reset_thread_pool(num_workers)
-            print("done")
 
 
 class TestRequestExceptions(object):

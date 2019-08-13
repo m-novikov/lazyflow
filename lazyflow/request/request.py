@@ -462,7 +462,7 @@ class Request(object):
         """
         Resume this request's execution (put it back on the worker's job queue).
         """
-        Request.global_thread_pool.wake_up(self)
+        Request.global_thread_pool.enqueue(self, self._priority)
 
     def _switch_to(self):
         """
