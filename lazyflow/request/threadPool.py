@@ -84,6 +84,10 @@ class ThreadPool:
         self._scheduler.daemon = True
         self._scheduler.start()
 
+    @property
+    def queue_size(self) -> int:
+        return self._unassigned_tasks.qsize()
+
     def _distribute_work(self) -> None:
         task = None
 
