@@ -470,7 +470,7 @@ class OpInputDataReader(Operator):
                 raise OpInputDataReader.DatasetReadError(*e.args) from e
 
     def _attemptOpenAsH5BlockStore(self, filePath):
-        if not os.path.splitext(filePath)[1] == ".json":
+        if not (_supports_h5blockreader and os.path.splitext(filePath)[1] == ".json"):
             return ([], None)
 
         op = OpH5BlockStoreReader(parent=self)
