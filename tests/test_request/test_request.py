@@ -7,8 +7,8 @@ import pytest
 import numpy as np
 from numpy.testing import assert_array_equal
 
-from lazyflow.request.request import Request, SimpleSignal, CancellationTokenSource, CancellationException
-
+from lazyflow.request.request import Request, SimpleSignal, CancellationException
+from lazyflow.request import CancellationTokenSource
 
 class TExc(Exception):
     """
@@ -92,7 +92,6 @@ class Work:
             self.exception = e
             raise
         finally:
-            print("DONE")
             self.done.set()
             print("OUTDONE")
 
@@ -235,7 +234,7 @@ def work(cancel_source):
     assert work.done.wait()
 
 
-def test_requests_created_within_request_considired_child_requests(work):
+def test_requests_created_within_request_considered_child_requests(work):
     assert work.request.child_requests == set(work.children)
     assert len(work.request.child_requests) == 2
 
@@ -271,8 +270,9 @@ def test_cancels_child_requests(cancelled_work):
         assert ch.cancelled
 
     work_rq = cancelled_work.request
+    cancelled_work.done.wait()
 
-    assert work_rq.child_requests == set()
+    assert not work_rq.child_requests == set()
 
 
 class TestRequestWithValue:

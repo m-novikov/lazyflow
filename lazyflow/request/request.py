@@ -45,6 +45,7 @@ import greenlet
 
 # lazyflow
 from . import threadPool
+from .cancellation_token import CancellationToken, NULL_CANCELLATION_TOKEN, UNCANCELLABLE_TOKEN
 
 # This module's code needs to be sanitized if you're not using CPython.
 # In particular, check that set operations like remove() are still atomic.
@@ -119,34 +120,6 @@ class CancellationException(Exception):
     """
 
     pass
-
-
-class CancellationToken:
-    __slots__ = ("_cancelled",)
-
-    def __init__(self):
-        self._cancelled = False
-
-    @property
-    def cancelled(self):
-        return self._cancelled
-
-    def raise_if_cancelled(self):
-        if self.cancelled:
-            raise CancellationException()
-
-    def __repr__(self):
-        return f"CancellationToken(id={id(self)}, cancelled={self._cancelled})"
-
-
-class CancellationTokenSource:
-    __slots__ = ("token",)
-
-    def __init__(self):
-        self.token = CancellationToken()
-
-    def cancel(self):
-        self.token._cancelled = True
 
 
 class Request(object):
@@ -225,7 +198,7 @@ class Request(object):
 
     _root_request_counter = itertools.count()
 
-    def __init__(self, fn, root_priority=[0], cancel_token=None):
+    def __init__(self, fn, root_priority=[0], cancel_token=NULL_CANCELLATION_TOKEN):
         """
         Constructor.
         Postconditions: The request has the same cancelled status as its parent (the request that is creating this one).
@@ -236,7 +209,6 @@ class Request(object):
         self._sig_cancelled = SimpleSignal()
         self._sig_finished = SimpleSignal()
         self._sig_execution_complete = SimpleSignal()
-        self.cancel_token = cancel_token
 
         # Workload
         self.fn = fn
@@ -259,18 +231,17 @@ class Request(object):
 
         # Request relationships
         self.pending_requests = set()  # Requests that are waiting for this one
-        self.blocking_requests = (
-            set()
-        )  # Requests that this one is waiting for (currently one at most since wait() can only be called on one request at a time)
-        self.child_requests = (
-            set()
-        )  # Requests that were created from within this request (NOT the same as pending_requests)
+        # Requests that this one is waiting for (currently one at most since wait() can only be called on one request at a time)
+        self.blocking_requests = set()
+        # Requests that were created from within this request (NOT the same as pending_requests)
+        self.child_requests = set()
 
         self._current_foreign_thread = None
         current_request = Request._current_request()
         self.parent_request = current_request
         self._max_child_priority = 0
         if current_request is None:
+            self.cancel_token = cancel_token
             self._priority = root_priority + [next(Request._root_request_counter)]
         else:
             with current_request._lock:
@@ -283,7 +254,7 @@ class Request(object):
 
     @property
     def uncancellable(self):
-        return self.cancel_token is None
+        return self.cancel_token is UNCANCELLABLE_TOKEN
 
     def __lt__(self, other):
         """
@@ -324,7 +295,7 @@ class Request(object):
 
     @property
     def cancelled(self):
-        return self.cancel_token and self.cancel_token.cancelled
+        return self.cancel_token.cancelled
 
     def clean(self, _fullClean=True):
         """
@@ -612,7 +583,13 @@ class Request(object):
         Here, we rely on an ordinary threading.Event primitive: ``self.finished_event``
         """
         # Don't allow this request to be cancelled, since a real thread is waiting for it.
+
         with self._lock:
+            if self.cancelled:
+                # It turns out this request was already cancelled.
+                raise Request.InvalidRequestException()
+
+            self.cancel_token = UNCANCELLABLE_TOKEN
             direct_execute_needed = not self.started and (timeout is None)
             if direct_execute_needed:
                 # This request hasn't been started yet
@@ -645,10 +622,6 @@ class Request(object):
 
         completed = self.finished_event.wait(timeout)
 
-        if self.cancelled:
-            # It turns out this request was already cancelled.
-            raise Request.InvalidRequestException()
-
         if not completed:
             raise Request.TimeoutException()
 
@@ -657,8 +630,8 @@ class Request(object):
             raise_with_traceback(exc_value, exc_tb)
 
     def raise_if_cancelled(self):
-        if self.cancel_token is not None:
-            self.cancel_token.raise_if_cancelled()
+        if self.cancel_token.cancelled:
+            raise CancellationException()
 
     def _wait_within_request(self, current_request):
         """
@@ -666,7 +639,7 @@ class Request(object):
         If we have to wait, suspend the current request instead of blocking the whole worker thread.
         """
         # Before we suspend the current request, check to see if it's been cancelled since it last blocked
-        self.raise_if_cancelled()
+        current_request.raise_if_cancelled()
 
         if current_request == self:
             # It's usually nonsense for a request to wait for itself,
@@ -678,6 +651,7 @@ class Request(object):
                 raise Request.CircularWaitException()
 
         with self._lock:
+            self.cancel_token |= current_request.cancel_token
             # If the current request isn't cancelled but we are,
             # then the current request is trying to wait for a request (i.e. self) that was spawned elsewhere and already cancelled.
             # If they really want it, they'll have to spawn it themselves.
@@ -692,6 +666,8 @@ class Request(object):
 
             direct_execute_needed = not self.started
             suspend_needed = self.started and not self.execution_complete
+            #self.cancel_token |= current_request.cancel_token
+
             if direct_execute_needed or suspend_needed:
                 current_request.blocking_requests.add(self)
                 self.pending_requests.add(current_request)
@@ -727,7 +703,7 @@ class Request(object):
 
         # Now we're back (no longer suspended)
         # Was the current request cancelled while it was waiting for us?
-        self.raise_if_cancelled()
+        current_request.raise_if_cancelled()
 
         # Are we back because we failed?
         if self.exception is not None:

@@ -22,12 +22,12 @@ from builtins import object
 # This information is also available on the ilastik web site at:
 # 		   http://ilastik.org/license/
 ###############################################################################
+from lazyflow.request import CancellationTokenSource
 from lazyflow.request.request import (
     Request,
     RequestLock,
     SimpleRequestCondition,
     RequestPool,
-    CancellationTokenSource,
     CancellationException,
 )
 import os
@@ -38,7 +38,7 @@ import gc
 import platform
 from functools import partial
 import unittest
-import nose
+import pytest
 
 import psutil
 
@@ -281,10 +281,11 @@ class TestRequest(unittest.TestCase):
         def f2():
             try:
                 return r1.wait()
-            except:
+            except CancellationException:
                 cancelled_requests.append(2)
 
-        r2 = Request(f2)
+        cancel_src2 = CancellationTokenSource()
+        r2 = Request(f2, cancel_token=cancel_src2.token)
 
         def f3():
             try:
@@ -292,7 +293,8 @@ class TestRequest(unittest.TestCase):
             except:
                 cancelled_requests.append(3)
 
-        r3 = Request(f3)
+        cancel_src3 = CancellationTokenSource()
+        r3 = Request(f3, cancel_token=cancel_src3.token)
 
         def otherThread():
             r2.wait()
@@ -305,7 +307,7 @@ class TestRequest(unittest.TestCase):
 
         # By now both r2 and r3 are waiting for the result of r1
         # Cancelling r3 should not cancel r1.
-        r3.cancel()
+        cancel_src3.cancel()
 
         t.join()  # Wait for r2 to finish
 
@@ -336,16 +338,12 @@ class TestRequest(unittest.TestCase):
         def f():
             pass
 
-        req = Request(f)
-        req.cancel()
-        try:
+        cancel_src = CancellationTokenSource()
+        req = Request(f, cancel_token=cancel_src.token)
+        cancel_src.cancel()
+
+        with pytest.raises(Request.InvalidRequestException):
             req.wait()
-        except Request.InvalidRequestException:
-            pass
-        else:
-            assert (
-                False
-            ), "Expected a Request.InvalidRequestException because we're waiting for a request that's already been cancelled."
 
     @traceLogged(traceLogger)
     def test_uncancellable(self):
@@ -367,11 +365,12 @@ class TestRequest(unittest.TestCase):
                 result += r.wait()
             return result
 
-        req = Request(big_workload)
+        cancel_src = CancellationTokenSource()
+        req = Request(big_workload, cancel_token=cancel_src.token)
 
         def attempt_cancel():
             time.sleep(1)
-            req.cancel()
+            cancel_src.cancel()
 
         # Start another thread that will try to cancel the request.
         # It won't have any effect because we're already waiting for it in a non-request thread.

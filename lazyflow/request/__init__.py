@@ -22,3 +22,4 @@ from __future__ import absolute_import
 # 		   http://ilastik.org/license/
 ###############################################################################
 from .request import *
+from .cancellation_token import CancellationTokenSource
