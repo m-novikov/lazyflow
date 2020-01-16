@@ -399,7 +399,12 @@ class OpInputDataReader(Operator):
                     )
                     raise OpInputDataReader.DatasetReadError(msg)
             try:
-                compression_setting = h5N5File[internalPath].compression
+                if internalPath.startswith("/"):
+                    internalPath = internalPath.replace("/", "", 1)
+
+                print(h5N5File, internalPath)
+                compression_setting = None
+                #compression_setting = h5N5File[internalPath].compression
             except Exception as e:
                 h5N5File.close()
                 msg = "Error reading H5/N5 File: {}\n{}".format(externalPath, e)

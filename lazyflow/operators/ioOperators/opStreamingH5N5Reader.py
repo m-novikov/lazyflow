@@ -26,15 +26,50 @@ import numpy
 import vigra
 import h5py
 import z5py
+import zarr
 import json
 import os
 import numpy as np
+import requests
 
 from lazyflow.graph import Operator, InputSlot, OutputSlot
 from lazyflow.utility import Timer
 from lazyflow.utility.helpers import get_default_axisordering
+from urllib.parse import urljoin
 
 logger = logging.getLogger(__name__)
+
+class RemoteFS:
+    class RemoteFile:
+        def __init__(self, url):
+            self._url = url
+
+        def read(self):
+            resp = requests.get(self._url)
+            resp.raise_for_status()
+            return resp.content
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args, **kwargs):
+            pass
+
+    def isfile(self, path):
+        return not path.endswith("/")
+
+    def isdir(self, path):
+        return path.endswith(".n5")
+
+    def exists(self, path):
+        return True
+
+    def __init__(self, url):
+        self._url = url
+
+    def open(self, path, *args, **kwargs):
+        url = urljoin(f"{self._url}/", path)
+        return self.RemoteFile(url)
 
 
 class OpStreamingH5N5Reader(Operator):
@@ -155,6 +190,10 @@ class OpStreamingH5N5Reader(Operator):
         """
         name, ext = os.path.splitext(filepath)
         if ext in OpStreamingH5N5Reader.N5EXTS:
-            return z5py.N5File(filepath, mode)
+            fs = RemoteFS("https://web.ilastik.org/data/datasources/eec5b03babebc54b64f6b31c3a87d92e/")
+            store = zarr.n5.N5Store("hbp-00173_262_902_1342__s26.n5", fs=fs)
+            f = zarr.group(store=store, overwrite=False)
+            f.close = lambda: None
+            return f
         elif ext in OpStreamingH5N5Reader.H5EXTS:
             return h5py.File(filepath, mode)
