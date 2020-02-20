@@ -765,6 +765,9 @@ class TestTransaction:
         op_b.setupOutputs.assert_called_once()
 
 
+_AN_OBJECT = object()
+
+
 class TestCompatibilityChecks:
     class OpA(graph.Operator):
         Output = graph.OutputSlot(stype=stype.ArrayLike)
@@ -790,7 +793,7 @@ class TestCompatibilityChecks:
                 return [1, 2, 3]
 
             elif slot == self.OutputOpaque:
-                return object()
+                return _AN_OBJECT
 
             elif slot == self.OutputUnsupportedType:
                 return object()
@@ -818,8 +821,9 @@ class TestCompatibilityChecks:
 
     def test_access_opaque_slot_value_should_not_raise_error(self, op):
         with pytest.warns(None) as record:
-            assert op.OutputOpaque.value
+            value = op.OutputOpaque.value
             assert len(record) == 0
+            assert value is _AN_OBJECT
 
     def test_arraylike_retun_non_arraylike_object_raises(self, op):
         with pytest.raises(stype.InvalidResult):

@@ -55,10 +55,6 @@ class ModelSession:
     def tiktorchClient(self):
         return self.__factory.tikTorchClient
 
-    def create_and_train_pixelwise(self, *args, **kwargs):
-        self.__factory.create_and_train_pixelwise(*args, **kwargs)
-        return self
-
     @property
     def name(self):
         return self.__session.name
@@ -213,18 +209,20 @@ class TikTorchLazyflowClassifierFactory:
 
     def create_model_session(self, model_str: bytes, devices: List[str]):
         session = self._tikTorchClient.CreateModelSession(
-            inference_pb2.CreateModelSessionRequest(model_blob=inference_pb2.Blob(content=model_str), deviceIds=devices)
+            inference_pb2.CreateModelSessionRequest(model_blob=inference_pb2.Blob(content=model_str), deviceIds=devices), timeout=20
         )
         return ModelSession(session, self)
 
     def __init__(self, server_config) -> None:
         _100_MB = 100 * 1024 * 1024
-        self._tikTorchClassifier = None
-        self._train_model = None
         self._shutdown_sent = False
 
         addr, port1, port2 = (socket.gethostbyname(server_config.address), server_config.port1, server_config.port2)
-        conn_conf = ConnConf("grpc", addr, port1, port2, timeout=20)
+        self._chan = grpc.insecure_channel(
+            f"{addr}:{port1}",
+            options=[("grpc.max_send_message_length", _100_MB), ("grpc.max_receive_message_length", _100_MB)],
+        )
+        conn_conf = ConnConf("grpc", addr, port1, port2, timeout=20, grpc_chan=self._chan)
 
         if addr == "127.0.0.1":
             self.launcher = LocalServerLauncher(conn_conf, path=server_config.path)
@@ -233,14 +231,24 @@ class TikTorchLazyflowClassifierFactory:
                 conn_conf, cred=SSHCred(server_config.username, key_path=server_config.ssh_key), path=server_config.path
             )
 
+        print("START")
         self.launcher.start()
+        print("START DONE")
+        #import time
+        #time.sleep()
+        res = grpc.channel_ready_future(self._chan).result(timeout=20)
+        print("READY AFTER START", res)
+        import time
 
-        self._chan = grpc.insecure_channel(
-            f"{addr}:{port1}",
-            options=[("grpc.max_send_message_length", _100_MB), ("grpc.max_receive_message_length", _100_MB)],
-        )
         self._tikTorchClient = inference_pb2_grpc.InferenceStub(self._chan)
-        self._devices = [d.id for d in server_config.devices if d.enabled]
+        resp = self._tikTorchClient.ListDevices(inference_pb2.Empty())
+        print("DONE", resp)
+
+
+    def list_devices(self):
+        client = self.tikTorchClient
+        resp = client.ListDevices(inference_pb2.Empty())
+        return [(d.id, d.id) for d in resp.devices]
 
     def shutdown(self):
         self._shutdown_sent = True

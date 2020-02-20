@@ -104,6 +104,7 @@ class _Worker(threading.Thread):
             try:
                 next_task()
             except Exception:
+                print("LOGGER HANDLERS", logger.handlers)
                 logger.exception("Exception during processing %s", next_task)
 
             # We're done with this request.

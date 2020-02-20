@@ -102,6 +102,8 @@ def test_exception_does_not_kill_worker():
 
 
 def test_exception_in_task_logged(caplog, pool):
+    from logging_tree import printout
+    printout()
     stop = threading.Event()
 
     class MyExc(Exception):
@@ -120,3 +122,4 @@ def test_exception_in_task_logged(caplog, pool):
     record = caplog.records[0]
 
     assert issubclass(record.exc_info[0], MyExc)
+    assert False
